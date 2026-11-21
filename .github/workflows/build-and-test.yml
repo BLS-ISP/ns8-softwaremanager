@@ -108,10 +108,10 @@ jobs:
           node-version: "20"
 
       - name: Build Software Center frontend assets (for compile-time embedding)
-        shell: bash
+        working-directory: agent/crates/swm-center/ui
         run: |
-          npm --prefix agent/crates/swm-center/ui install
-          npm --prefix agent/crates/swm-center/ui run build
+          npm install
+          npm run build
 
       - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -154,7 +154,7 @@ async fn handle_self_service_trigger(
         }),
         detection_rule: None,
         blocked_processes: vec![],
-        return_codes: HashMap::new(),
+        return_codes: HashMap::from([("100".to_string(), "reboot_required".to_string())]),
     };
     guard.kp.sign_job(&mut job);
     Json(job)
@@ -165,18 +165,23 @@ async fn test_full_agent_enroll_approval_signed_job_and_ipc_self_service_e2e() {
     let dir = tempdir().unwrap();
     let kp = TestSigningKeypair::generate();
 
-    let (pkg_filename, script_bytes) = if cfg!(windows) {
+    let (pkg_filename, script_bytes, expected_exit_code) = if cfg!(windows) {
         (
             "install_tool.cmd".to_string(),
             b"@echo off\r\necho INSTALLED_OK\r\nexit /b 3010\r\n".to_vec(),
+            3010,
         )
     } else {
         (
             "install_tool.sh".to_string(),
-            b"#!/bin/sh\necho INSTALLED_OK\nexit 3010\n".to_vec(),
+            b"#!/bin/sh\necho INSTALLED_OK\nexit 100\n".to_vec(),
+            100,
         )
     };
     let pkg_sha = compute_bytes_sha256(&script_bytes);
+
+    let custom_return_codes =
+        HashMap::from([("100".to_string(), "reboot_required".to_string())]);
 
     let mut req_job = SignedJob {
         job_id: "job-req-1".to_string(),
@@ -202,7 +207,7 @@ async fn test_full_agent_enroll_approval_signed_job_and_ipc_self_service_e2e() {
         }),
         detection_rule: None,
         blocked_processes: vec![],
-        return_codes: HashMap::new(),
+        return_codes: custom_return_codes.clone(),
     };
     kp.sign_job(&mut req_job);
 
@@ -289,7 +294,7 @@ async fn test_full_agent_enroll_approval_signed_job_and_ipc_self_service_e2e() {
         assert!(guard.inventory_received >= 1);
         let r1 = guard.job_results.get("job-req-1").unwrap();
         assert_eq!(r1.status, "succeeded");
-        assert_eq!(r1.exit_code, 3010);
+        assert_eq!(r1.exit_code, expected_exit_code);
         assert!(r1.reboot_required);
         assert!(r1.stdout.contains("INSTALLED_OK"));
     }
