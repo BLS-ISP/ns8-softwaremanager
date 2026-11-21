@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="NS8 Software Manager Agent"
+    Language="1031"
+    Version="1.0.0.0"
+    Manufacturer="NethServer / NS8-SoftwareManager"
+    UpgradeCode="8A2B7E41-5C93-4D10-9F88-3E7B9C11A008">
+
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Platform="x64"
+      Description="NS8-SoftwareManager Endpoint Agent and End-User Software Center" />
+
+    <MajorUpgrade DowngradeErrorMessage="Eine neuere Version des NS8 Software Manager Agent ist bereits installiert." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- GPO / Silent MSI Parameters -->
+    <Property Id="SWM_SERVER_URL" Secure="yes" />
+    <Property Id="SWM_ENROLLMENT_TOKEN" Secure="yes" Hidden="yes" />
+    <Property Id="SWM_HEADLESS" Value="0" Secure="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="NS8-SoftwareManager" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="DATADIR" Name="NS8-SoftwareManager" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="CmpAgentService" Guid="1F49E0A2-82D4-478E-B0F1-5A91C73A1001" Win64="yes">
+        <File Id="SwmAgentExe" Source="..\target\release\swm-agent.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="SwmServiceInstall"
+          Type="ownProcess"
+          Name="NS8SoftwareManagerAgent"
+          DisplayName="NS8 Software Manager Agent"
+          Description="Privileged OS Patching and Software Deployment Service for NethServer 8"
+          Start="auto"
+          Account="LocalSystem"
+          ErrorControl="normal"
+          Arguments="--data-dir &quot;[CommonAppDataFolder]NS8-SoftwareManager&quot; service-run" />
+        <ServiceControl
+          Id="SwmServiceControl"
+          Name="NS8SoftwareManagerAgent"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+
+      <Component Id="CmpSoftwareCenter" Guid="2B61F1C3-93E5-489F-A1E2-6B82D84B2002" Win64="yes">
+        <Condition>SWM_HEADLESS = "0"</Condition>
+        <File Id="SwmCenterExe" Source="..\target\release\swm-center.exe" KeyPath="yes" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="NS8SoftwareCenter"
+          Type="string"
+          Value="&quot;C:\Program Files\NS8-SoftwareManager\swm-center.exe&quot; gui --tray-only" />
+      </Component>
+    </DirectoryRef>
+
+    <CustomAction
+      Id="EnrollEndpointAction"
+      FileKey="SwmAgentExe"
+      ExeCommand="--data-dir &quot;[CommonAppDataFolder]NS8-SoftwareManager&quot; enroll --server &quot;[SWM_SERVER_URL]&quot; --token &quot;[SWM_ENROLLMENT_TOKEN]&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="EnrollEndpointAction" Before="StartServices">
+        NOT Installed AND SWM_SERVER_URL &lt;&gt; "" AND SWM_ENROLLMENT_TOKEN &lt;&gt; ""
+      </Custom>
+    </InstallExecuteSequence>
+
+    <Feature Id="CoreAgentFeature" Title="NS8 Agent Service" Level="1">
+      <ComponentRef Id="CmpAgentService" />
+    </Feature>
+    <Feature Id="SoftwareCenterFeature" Title="Desktop Software Center &amp; Tray" Level="1">
+      <ComponentRef Id="CmpSoftwareCenter" />
+    </Feature>
+  </Product>
+</Wix>

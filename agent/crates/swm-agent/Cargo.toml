@@ -1,0 +1,44 @@
+[package]
+name = "swm-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "swm_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swm-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+swm-common.workspace = true
+sysinfo.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"
+winreg = "0.52"
+
+[dev-dependencies]
+axum = { version = "0.7", features = ["ws"] }

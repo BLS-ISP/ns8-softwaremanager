@@ -1,0 +1,48 @@
+name: "ns8-swm-agent"
+arch: "amd64"
+platform: "linux"
+version: "1.0.0"
+section: "admin"
+priority: "optional"
+maintainer: "BLS-ISP <info@bls-isp.de>"
+description: |
+  NS8-SoftwareManager Cross-Platform Endpoint Agent and Single-File End-User Software Center.
+  Provides managed OS patching (APT/DNF), Flatpak/custom software deployment,
+  and unprivileged desktop self-service over Ed25519-verified IPC.
+vendor: "BLS-ISP"
+homepage: "https://github.com/BLS-ISP/ns8-softwaremanager"
+license: "GPL-3.0-or-later"
+
+contents:
+  - src: "../target/release/swm-agent"
+    dst: "/usr/local/bin/swm-agent"
+    file_info:
+      mode: 0755
+
+  - src: "../target/release/swm-center"
+    dst: "/usr/local/bin/swm-center"
+    file_info:
+      mode: 0755
+
+  - src: "./swm-agent.service"
+    dst: "/lib/systemd/system/swm-agent.service"
+    file_info:
+      mode: 0644
+
+  - src: "./swm-center.desktop"
+    dst: "/etc/xdg/autostart/swm-center.desktop"
+    type: "config|noreplace"
+    file_info:
+      mode: 0644
+
+  - src: "./swm-center.desktop"
+    dst: "/usr/share/applications/swm-center.desktop"
+    file_info:
+      mode: 0644
+
+  - dst: "/etc/ns8-swm"
+    type: "dir"
+    file_info:
+      mode: 0700
+      owner: "root"
+      group: "root"

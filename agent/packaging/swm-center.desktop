@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=NS8 Software Center
+GenericName=Software Center
+Comment=Installieren und aktualisieren Sie freigegebene Unternehmensanwendungen
+Comment[en]=Install and update approved enterprise applications
+Exec=/usr/local/bin/swm-center gui --tray-only
+Icon=system-software-install
+Terminal=false
+Categories=System;PackageManager;
+X-GNOME-Autostart-enabled=true
