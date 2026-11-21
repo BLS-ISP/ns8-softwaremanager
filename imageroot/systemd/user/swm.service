@@ -1,0 +1,25 @@
+[Unit]
+Description=Rootless Podman pod for NS8 SoftwareManager
+Documentation=https://github.com/NethServer/ns8-softwaremanager
+Wants=swm-db.service swm-app.service
+Before=swm-db.service swm-app.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+Restart=always
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/swm.pid %t/swm.pod-id
+ExecStartPre=/usr/bin/podman pod create --infra-conmon-pidfile %t/swm.pid \
+    --pod-id-file %t/swm.pod-id \
+    --name=swm \
+    -p 127.0.0.1:${TCP_PORT}:8080 \
+    --replace
+ExecStart=/usr/bin/podman pod start --pod-id-file %t/swm.pod-id
+ExecStop=/usr/bin/podman pod stop --ignore --pod-id-file %t/swm.pod-id -t 10
+ExecStopPost=/usr/bin/podman pod rm --ignore -f --pod-id-file %t/swm.pod-id
+PIDFile=%t/swm.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,222 @@
+name: Build, Test & Package NS8-SoftwareManager
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main", "master"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  backend-tests:
+    name: FastAPI Backend & NS8 Imageroot Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server/requirements.txt
+
+      - name: Run backend & NS8 rule pytest suites
+        run: python -m pytest server/tests -v
+
+      - name: Validate NS8 imageroot Python scripts & LF line endings
+        run: |
+          python -m compileall -q imageroot server/app
+          test ! -d imageroot/actions/get-status
+          python -c "
+          import ast, pathlib
+          targets = (
+              list(pathlib.Path('imageroot').rglob('*'))
+              + [
+                  pathlib.Path('build-images.sh'),
+                  pathlib.Path('Containerfile'),
+                  pathlib.Path('Containerfile.app'),
+                  pathlib.Path('.github/workflows/build-and-test.yml'),
+              ]
+          )
+          for path in targets:
+              if path.is_file():
+                  raw = path.read_bytes()
+                  assert b'\r\n' not in raw, f'CRLF detected in {path}'
+                  if raw.startswith(b'#!/usr/bin/env python3'):
+                      ast.parse(raw.decode('utf-8'), filename=str(path))
+          print('All NS8 imageroot & packaging files verified (AST + pure LF)!')
+          "
+
+  web-and-cockpit-ui:
+    name: Admin Web SPA & NS8 Cockpit UI Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install, test & build Admin Web Console (web/)
+        run: |
+          npm --prefix web install
+          npm --prefix web test -- --run
+          npm --prefix web run build
+
+      - name: Install & build NS8 Cockpit UI (ui/)
+        run: |
+          npm --prefix ui install --legacy-peer-deps
+          npm --prefix ui run build
+
+      - name: Install, test & build Software Center UI (agent/crates/swm-center/ui)
+        run: |
+          npm --prefix agent/crates/swm-center/ui install
+          npm --prefix agent/crates/swm-center/ui test -- --run
+          npm --prefix agent/crates/swm-center/ui run build
+
+  agent-build:
+    name: Rust Agent & Software Center (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact_name: agents-linux-amd64
+          - os: windows-latest
+            platform: windows
+            artifact_name: agents-windows-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Software Center frontend assets (for compile-time embedding)
+        shell: bash
+        run: |
+          npm --prefix agent/crates/swm-center/ui install
+          npm --prefix agent/crates/swm-center/ui run build
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Cargo workspace tests
+        run: cargo test --manifest-path agent/Cargo.toml --workspace
+
+      - name: Build release binaries
+        run: cargo build --release --manifest-path agent/Cargo.toml --workspace
+
+      - name: Install nFPM packager (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          NFPM_VERSION="v2.38.0"
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/${NFPM_VERSION}/nfpm_${NFPM_VERSION#v}_Linux_x86_64.tar.gz" | tar -xz nfpm
+          sudo mv nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      - name: Package Linux .deb and .rpm client installers via nFPM
+        if: matrix.platform == 'linux'
+        working-directory: agent/packaging
+        run: |
+          mkdir -p ../../dist/linux-packages
+          nfpm pkg --config nfpm.yaml --packager deb --target ../../dist/linux-packages/
+          nfpm pkg --config nfpm.yaml --packager rpm --target ../../dist/linux-packages/
+          ls -lh ../../dist/linux-packages/
+
+      - name: Upload Linux .deb & .rpm client packages
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-client-packages-deb-rpm
+          path: |
+            dist/linux-packages/*.deb
+            dist/linux-packages/*.rpm
+
+      - name: Upload compiled agent & Software Center binaries (${{ matrix.platform }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            agent/target/release/swm-agent*
+            agent/target/release/swm-center*
+
+  package-ns8-images:
+    name: Build & Publish NS8 Rootless Container Images
+    needs: [backend-tests, web-and-cockpit-ui, agent-build]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-publish-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download prebuilt Windows client binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: agents-windows-amd64
+          path: prebuilt-agents/windows
+
+      - name: Verify staged Windows binaries
+        run: |
+          find prebuilt-agents/windows -mindepth 2 -type f -name "*.exe" -exec mv -f {} prebuilt-agents/windows/ \; || true
+          test -f prebuilt-agents/windows/swm-agent.exe
+          test -f prebuilt-agents/windows/swm-center.exe
+          ls -lh prebuilt-agents/windows/
+
+      - name: Log in to GitHub Container Registry (GHCR) on push
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate Podman to GHCR on push
+        if: github.event_name == 'push'
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if command -v podman >/dev/null 2>&1; then
+            printf '%s\n' "${GHCR_TOKEN}" | podman login ghcr.io -u "${GHCR_USER}" --password-stdin
+          fi
+
+      - name: Build NS8 images on pull requests (no push)
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          IMAGETAG: ${{ github.sha }}
+        run: bash ./build-images.sh
+
+      - name: Build & push NS8 images to GHCR on branch push
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          IMAGETAG: ${{ github.ref_name }}
+          TAG_LATEST: "1"
+        run: PUSH=1 bash ./build-images.sh
+
+      - name: Build & push NS8 images to GHCR on version tag (v*)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          IMAGETAG: ${{ github.ref_name }}
+          TAG_LATEST: "1"
+        run: PUSH=1 bash ./build-images.sh

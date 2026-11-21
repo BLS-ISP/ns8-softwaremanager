@@ -1,0 +1,35 @@
+[Unit]
+Description=PostgreSQL 16 database for NS8 SoftwareManager
+BindsTo=swm.service
+After=swm.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Environment=POSTGRES_IMAGE=docker.io/library/postgres:16-alpine
+EnvironmentFile=%S/state/environment
+EnvironmentFile=-%S/state/secrets.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/swm-db.pid %t/swm-db.ctr-id
+ExecStart=/usr/bin/podman run \
+    --conmon-pidfile %t/swm-db.pid \
+    --cidfile %t/swm-db.ctr-id \
+    --cgroups=no-conmon \
+    --pod-id-file %t/swm.pod-id \
+    --replace -d --name swm-db \
+    --pull=missing \
+    --restart=on-failure \
+    -e POSTGRES_USER=swm \
+    -e POSTGRES_DB=swm \
+    -e POSTGRES_PASSWORD=${DB_PASSWORD} \
+    -e PGDATA=/var/lib/postgresql/data/pgdata \
+    -v swm-db-data:/var/lib/postgresql/data:Z \
+    ${POSTGRES_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/swm-db.ctr-id -t 15
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/swm-db.ctr-id
+PIDFile=%t/swm-db.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

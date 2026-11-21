@@ -1,0 +1,7 @@
+#!/bin/bash
+
+set -euo pipefail
+
+systemctl --user daemon-reload
+systemctl --user enable --now swm.service swm-db.service swm-app.service
+systemctl --user restart swm-app.service

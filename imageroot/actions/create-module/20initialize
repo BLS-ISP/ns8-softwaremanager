@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import secrets
+import sys
+import agent
+
+postgres_image = os.environ.get(
+    "POSTGRES_IMAGE", "docker.io/library/postgres:16-alpine"
+)
+swm_app_image = os.environ.get(
+    "SOFTWAREMANAGER_APP_IMAGE",
+    os.environ.get("SWM_APP_IMAGE", "ghcr.io/bls-isp/softwaremanager-app:latest"),
+)
+tcp_port = os.environ.get("TCP_PORT", "20080")
+db_password = os.environ.get("DB_PASSWORD") or secrets.token_urlsafe(24)
+jwt_secret = os.environ.get("JWT_SECRET") or secrets.token_urlsafe(32)
+admin_username = os.environ.get("ADMIN_USERNAME", "admin")
+admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+
+agent.set_env("TCP_PORT", tcp_port)
+agent.set_env("POSTGRES_IMAGE", postgres_image)
+agent.set_env("SWM_APP_IMAGE", swm_app_image)
+agent.set_env("DB_PASSWORD", db_password)
+agent.set_env("JWT_SECRET", jwt_secret)
+agent.set_env("ADMIN_USERNAME", admin_username)
+agent.set_env("ADMIN_PASSWORD", admin_password)
+agent.set_env("DOMAIN_NAME", "")
+agent.set_env("LETS_ENCRYPT", "false")
+agent.set_env("HTTP2HTTPS", "true")
+agent.set_env("LDAP_DOMAIN", "")
+agent.set_env("LDAP_HOST", "")
+agent.set_env("LDAP_PORT", "389")
+agent.set_env("LDAP_SCHEMA", "")
+agent.set_env("LDAP_BASE_DN", "")
+agent.set_env("LDAP_BIND_DN", "")
+agent.set_env("LDAP_BIND_PASSWORD", "")
+agent.set_env("LDAP_TLS", "false")
+agent.set_env("APP_URL", "")
+agent.dump_env()
+
+json.dump({"tcp_port": int(tcp_port)}, sys.stdout)

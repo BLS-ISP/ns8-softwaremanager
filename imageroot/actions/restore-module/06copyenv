@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+import agent
+
+request = json.load(sys.stdin)
+original_environment = request.get("environment", {})
+
+RESTORABLE_KEYS = [
+    "DOMAIN_NAME",
+    "LETS_ENCRYPT",
+    "HTTP2HTTPS",
+    "APP_URL",
+    "ADMIN_USERNAME",
+    "ADMIN_PASSWORD",
+    "DB_PASSWORD",
+    "JWT_SECRET",
+    "LDAP_DOMAIN",
+    "LDAP_HOST",
+    "LDAP_PORT",
+    "LDAP_SCHEMA",
+    "LDAP_BASE_DN",
+    "LDAP_BIND_DN",
+    "LDAP_BIND_PASSWORD",
+    "LDAP_TLS",
+]
+
+for key in RESTORABLE_KEYS:
+    if key in original_environment:
+        value = original_environment[key]
+        if key == "LDAP_PORT" and not str(value).strip():
+            value = "389"
+        agent.set_env(key, value)
+
+agent.dump_env()

@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Clean up temporary SQL dump file after Restic backup completes
+rm -f state/database.sql

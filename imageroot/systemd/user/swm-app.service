@@ -1,0 +1,52 @@
+[Unit]
+Description=FastAPI Backend and Admin Console for NS8 SoftwareManager
+BindsTo=swm.service
+After=swm.service swm-db.service
+Requires=swm-db.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Environment=SWM_APP_IMAGE=ghcr.io/bls-isp/softwaremanager-app:latest
+EnvironmentFile=%S/state/environment
+EnvironmentFile=-%S/state/secrets.env
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/swm-app.pid %t/swm-app.ctr-id
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do /usr/bin/podman exec swm-db pg_isready -U swm -d swm && exit 0; sleep 1; done; exit 1'
+ExecStart=/usr/bin/podman run \
+    --conmon-pidfile %t/swm-app.pid \
+    --cidfile %t/swm-app.ctr-id \
+    --cgroups=no-conmon \
+    --pod-id-file %t/swm.pod-id \
+    --replace -d --name swm-app \
+    --pull=missing \
+    --restart=on-failure \
+    -e DATABASE_URL=postgresql+asyncpg://swm:${DB_PASSWORD}@127.0.0.1:5432/swm \
+    -e DATA_DIR=/data \
+    -e WEB_DIST_DIR=/app/web/dist \
+    -e STATIC_AGENTS_DIR=/app/agents \
+    -e PUBLIC_BASE_URL=${APP_URL} \
+    -e SERVER_URL=${APP_URL} \
+    -e JWT_SECRET=${JWT_SECRET} \
+    -e ADMIN_USERNAME=${ADMIN_USERNAME} \
+    -e ADMIN_PASSWORD=${ADMIN_PASSWORD} \
+    -e LDAP_DOMAIN=${LDAP_DOMAIN} \
+    -e LDAP_HOST=${LDAP_HOST} \
+    -e LDAP_PORT=${LDAP_PORT} \
+    -e LDAP_SCHEMA=${LDAP_SCHEMA} \
+    -e LDAP_BASE_DN=${LDAP_BASE_DN} \
+    -e LDAP_BIND_DN=${LDAP_BIND_DN} \
+    -e LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD} \
+    -e LDAP_TLS=${LDAP_TLS} \
+    -e LDAP_USE_SSL=${LDAP_TLS} \
+    -v swm-app-data:/data:Z \
+    ${SWM_APP_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/swm-app.ctr-id -t 15
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/swm-app.ctr-id
+PIDFile=%t/swm-app.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

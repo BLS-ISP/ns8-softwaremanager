@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import agent
+
+postgres_image = os.environ.get(
+    "POSTGRES_IMAGE", "docker.io/library/postgres:16-alpine"
+)
+swm_app_image = os.environ.get(
+    "SOFTWAREMANAGER_APP_IMAGE",
+    os.environ.get("SWM_APP_IMAGE", "ghcr.io/bls-isp/softwaremanager-app:latest"),
+)
+
+agent.set_env("POSTGRES_IMAGE", postgres_image)
+agent.set_env("SWM_APP_IMAGE", swm_app_image)
+agent.dump_env()
+
+for image in (postgres_image, swm_app_image):
+    subprocess.run(["podman", "pull", image], check=True)
+
+subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+if os.environ.get("DOMAIN_NAME", "").strip():
+    subprocess.run(
+        ["systemctl", "--user", "restart", "swm.service", "swm-db.service", "swm-app.service"],
+        check=True,
+    )

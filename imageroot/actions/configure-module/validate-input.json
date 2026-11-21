@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "configure-module input",
+  "description": "Schema for NS8-SoftwareManager configure-module parameters",
+  "type": "object",
+  "required": [
+    "domain_name",
+    "lets_encrypt",
+    "http2https"
+  ],
+  "properties": {
+    "domain_name": {
+      "type": "string",
+      "description": "Fully qualified domain name (FQDN) for the SoftwareManager portal and agent endpoint",
+      "format": "idn-hostname",
+      "minLength": 1
+    },
+    "lets_encrypt": {
+      "type": "boolean",
+      "description": "Request and renew a valid Let's Encrypt TLS certificate via Traefik"
+    },
+    "http2https": {
+      "type": "boolean",
+      "description": "Automatically redirect HTTP requests to HTTPS"
+    },
+    "ldap_domain": {
+      "type": "string",
+      "description": "Optional NS8 user domain name (Active Directory or OpenLDAP) for administrator login"
+    },
+    "admin_username": {
+      "type": "string",
+      "description": "Local fallback administrator username",
+      "minLength": 1
+    },
+    "admin_password": {
+      "type": "string",
+      "description": "Optional new password for the local fallback administrator"
+    }
+  },
+  "additionalProperties": false
+}

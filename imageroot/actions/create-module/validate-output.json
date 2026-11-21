@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "create-module output",
+  "description": "Schema for create-module output",
+  "type": "object",
+  "additionalProperties": true
+}

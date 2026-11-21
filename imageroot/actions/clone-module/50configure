@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import subprocess
+import sys
+import time
+import agent
+from agent.ldapproxy import LdapDiscovery
+
+raw_input = sys.stdin.read().strip()
+request = json.loads(raw_input) if raw_input else {}
+original_env = request.get("environment", {})
+
+module_id = os.environ["MODULE_ID"]
+tcp_port = os.environ["TCP_PORT"]
+
+for key in (
+    "DB_PASSWORD",
+    "JWT_SECRET",
+    "ADMIN_USERNAME",
+    "ADMIN_PASSWORD",
+    "LETS_ENCRYPT",
+    "HTTP2HTTPS",
+    "LDAP_DOMAIN",
+):
+    if key in original_env:
+        agent.set_env(key, original_env[key])
+
+# Assign a conflict-free hostname for the cloned instance
+requested_domain = request.get("domain_name", "").strip().lower()
+source_domain = original_env.get("DOMAIN_NAME", os.environ.get("DOMAIN_NAME", "")).strip().lower()
+
+clone_domain = ""
+if requested_domain and not agent.http_route_in_use(domain=requested_domain):
+    clone_domain = requested_domain
+elif source_domain:
+    candidate = f"{module_id}-{source_domain}"
+    if not agent.http_route_in_use(domain=candidate):
+        clone_domain = candidate
+
+app_url = f"https://{clone_domain}" if clone_domain else ""
+agent.set_env("DOMAIN_NAME", clone_domain)
+agent.set_env("APP_URL", app_url)
+
+ldap_domain = original_env.get("LDAP_DOMAIN", os.environ.get("LDAP_DOMAIN", "")).strip()
+if ldap_domain:
+    try:
+        ldap_info = LdapDiscovery().get_domain(ldap_domain)
+        agent.set_env("LDAP_HOST", str(ldap_info.get("host", "")))
+        agent.set_env("LDAP_PORT", str(ldap_info.get("port") or 389))
+        agent.set_env("LDAP_SCHEMA", str(ldap_info.get("schema", "")))
+        agent.set_env("LDAP_BASE_DN", str(ldap_info.get("base_dn", "")))
+        agent.set_env("LDAP_BIND_DN", str(ldap_info.get("bind_dn", "")))
+        agent.set_env("LDAP_BIND_PASSWORD", str(ldap_info.get("bind_password", "")))
+        agent.set_env("LDAP_TLS", "true" if ldap_info.get("tls", False) else "false")
+    except Exception:
+        pass
+
+agent.dump_env()
+
+# Start pod and database container and restore SQL dump if present
+subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+subprocess.run(
+    ["systemctl", "--user", "enable", "--now", "swm.service", "swm-db.service"],
+    check=True,
+)
+
+for _ in range(30):
+    ready = subprocess.run(
+        ["podman", "exec", "swm-db", "pg_isready", "-U", "swm", "-d", "swm"],
+        check=False,
+    )
+    if ready.returncode == 0:
+        break
+    time.sleep(1)
+else:
+    raise RuntimeError("PostgreSQL container swm-db did not become ready within 30s")
+
+dump_path = os.path.join("state", "database.sql")
+if os.path.isfile(dump_path):
+    subprocess.run(
+        [
+            "podman",
+            "exec",
+            "swm-db",
+            "psql",
+            "-U",
+            "swm",
+            "-d",
+            "postgres",
+            "-c",
+            "DROP DATABASE IF EXISTS swm; CREATE DATABASE swm OWNER swm;",
+        ],
+        check=True,
+    )
+    with open(dump_path, "rb") as dump_file:
+        subprocess.run(
+            ["podman", "exec", "-i", "swm-db", "psql", "-U", "swm", "-d", "swm"],
+            stdin=dump_file,
+            check=True,
+        )
+    os.remove(dump_path)
+
+if clone_domain:
+    lets_encrypt = (
+        original_env.get("LETS_ENCRYPT", os.environ.get("LETS_ENCRYPT", "false")).lower() == "true"
+    )
+    http2https = (
+        original_env.get("HTTP2HTTPS", os.environ.get("HTTP2HTTPS", "true")).lower() == "true"
+    )
+    traefik_id = agent.resolve_agent_id("traefik@node")
+    if traefik_id:
+        route_response = agent.tasks.run(
+            agent_id=traefik_id,
+            action="set-route",
+            data={
+                "instance": module_id,
+                "url": f"http://127.0.0.1:{tcp_port}",
+                "host": clone_domain,
+                "lets_encrypt": lets_encrypt,
+                "http2https": http2https,
+            },
+        )
+        agent.assert_exp(route_response["exit_code"] == 0)
+
+    subprocess.run(
+        ["systemctl", "--user", "enable", "--now", "swm-app.service"],
+        check=True,
+    )

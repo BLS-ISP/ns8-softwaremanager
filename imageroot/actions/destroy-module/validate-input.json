@@ -1,0 +1,7 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "destroy-module input",
+  "description": "Schema for destroy-module input parameters",
+  "type": "object",
+  "additionalProperties": true
+}

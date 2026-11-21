@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "configure-module output",
+  "description": "Schema for configure-module output",
+  "type": "object",
+  "required": [
+    "app_url"
+  ],
+  "properties": {
+    "app_url": {
+      "type": "string",
+      "description": "Public HTTPS URL of the SoftwareManager web console"
+    }
+  },
+  "additionalProperties": true
+}

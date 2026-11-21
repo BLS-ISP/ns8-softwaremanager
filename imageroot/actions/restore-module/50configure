@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+
+import os
+import subprocess
+import time
+import agent
+from agent.ldapproxy import LdapDiscovery
+
+domain_name = os.environ.get("DOMAIN_NAME", "").strip().lower()
+lets_encrypt = os.environ.get("LETS_ENCRYPT", "false").lower() == "true"
+http2https = os.environ.get("HTTP2HTTPS", "true").lower() == "true"
+ldap_domain = os.environ.get("LDAP_DOMAIN", "").strip()
+tcp_port = os.environ["TCP_PORT"]
+module_id = os.environ["MODULE_ID"]
+
+# Refresh local node LDAP proxy bindings if a user domain was configured
+if ldap_domain:
+    try:
+        ldap_info = LdapDiscovery().get_domain(ldap_domain)
+        agent.set_env("LDAP_HOST", str(ldap_info.get("host", "")))
+        agent.set_env("LDAP_PORT", str(ldap_info.get("port") or 389))
+        agent.set_env("LDAP_SCHEMA", str(ldap_info.get("schema", "")))
+        agent.set_env("LDAP_BASE_DN", str(ldap_info.get("base_dn", "")))
+        agent.set_env("LDAP_BIND_DN", str(ldap_info.get("bind_dn", "")))
+        agent.set_env("LDAP_BIND_PASSWORD", str(ldap_info.get("bind_password", "")))
+        agent.set_env("LDAP_TLS", "true" if ldap_info.get("tls", False) else "false")
+        agent.dump_env()
+    except Exception:
+        pass
+
+# Start pod and database container first so SQL dump can be restored cleanly
+subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+subprocess.run(
+    ["systemctl", "--user", "enable", "--now", "swm.service", "swm-db.service"],
+    check=True,
+)
+
+for _ in range(30):
+    ready = subprocess.run(
+        ["podman", "exec", "swm-db", "pg_isready", "-U", "swm", "-d", "swm"],
+        check=False,
+    )
+    if ready.returncode == 0:
+        break
+    time.sleep(1)
+else:
+    raise RuntimeError("PostgreSQL container swm-db did not become ready within 30s")
+
+dump_path = os.path.join("state", "database.sql")
+if os.path.isfile(dump_path):
+    subprocess.run(
+        [
+            "podman",
+            "exec",
+            "swm-db",
+            "psql",
+            "-U",
+            "swm",
+            "-d",
+            "postgres",
+            "-c",
+            "DROP DATABASE IF EXISTS swm; CREATE DATABASE swm OWNER swm;",
+        ],
+        check=True,
+    )
+    with open(dump_path, "rb") as dump_file:
+        subprocess.run(
+            ["podman", "exec", "-i", "swm-db", "psql", "-U", "swm", "-d", "swm"],
+            stdin=dump_file,
+            check=True,
+        )
+    os.remove(dump_path)
+
+# Re-register Traefik route on the target node
+if domain_name:
+    traefik_id = agent.resolve_agent_id("traefik@node")
+    agent.assert_exp(traefik_id is not None)
+    route_response = agent.tasks.run(
+        agent_id=traefik_id,
+        action="set-route",
+        data={
+            "instance": module_id,
+            "url": f"http://127.0.0.1:{tcp_port}",
+            "host": domain_name,
+            "lets_encrypt": lets_encrypt,
+            "http2https": http2https,
+        },
+    )
+    agent.assert_exp(route_response["exit_code"] == 0)
+
+subprocess.run(
+    ["systemctl", "--user", "enable", "--now", "swm-app.service"],
+    check=True,
+)

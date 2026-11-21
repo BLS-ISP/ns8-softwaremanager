@@ -1,0 +1,23 @@
+{
+  "name": "SoftwareManager",
+  "description": {
+    "en": "Central endpoint, OS patch, and self-service software deployment manager for Windows and Linux systems",
+    "de": "Zentrales Endpoint-, Betriebssystem-Patch- und Self-Service-Software-Management für Windows- und Linux-Systeme"
+  },
+  "categories": [
+    "sysadmin",
+    "security"
+  ],
+  "authors": [
+    {
+      "name": "BLS-ISP",
+      "email": "info@bls-isp.de"
+    }
+  ],
+  "docs": {
+    "documentation_url": "https://github.com/BLS-ISP/ns8-softwaremanager#readme",
+    "bug_url": "https://github.com/BLS-ISP/ns8-softwaremanager/issues",
+    "code_url": "https://github.com/BLS-ISP/ns8-softwaremanager"
+  },
+  "source": "ghcr.io/bls-isp/softwaremanager"
+}

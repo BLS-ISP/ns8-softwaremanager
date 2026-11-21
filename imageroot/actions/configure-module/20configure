@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+
+import json
+import os
+import sys
+import agent
+from agent.ldapproxy import LdapDiscovery
+
+data = json.load(sys.stdin)
+
+domain_name = data["domain_name"].strip().lower()
+lets_encrypt = bool(data.get("lets_encrypt", False))
+http2https = bool(data.get("http2https", True))
+ldap_domain = data.get("ldap_domain", "").strip()
+admin_username = data.get("admin_username", "").strip() or os.environ.get("ADMIN_USERNAME", "admin")
+admin_password = data.get("admin_password", "")
+
+tcp_port = os.environ["TCP_PORT"]
+module_id = os.environ["MODULE_ID"]
+
+# Register HTTP/HTTPS route in NS8 Traefik strictly forwarding to 127.0.0.1:${TCP_PORT}
+traefik_id = agent.resolve_agent_id("traefik@node")
+agent.assert_exp(traefik_id is not None)
+
+route_response = agent.tasks.run(
+    agent_id=traefik_id,
+    action="set-route",
+    data={
+        "instance": module_id,
+        "url": f"http://127.0.0.1:{tcp_port}",
+        "host": domain_name,
+        "lets_encrypt": lets_encrypt,
+        "http2https": http2https,
+    },
+)
+agent.assert_exp(route_response["exit_code"] == 0)
+
+# Resolve optional NS8 User-Domain (Samba AD / OpenLDAP) via LdapDiscovery
+if ldap_domain:
+    ldap_info = LdapDiscovery().get_domain(ldap_domain)
+    ldap_host = str(ldap_info.get("host", ""))
+    ldap_port = str(ldap_info.get("port") or 389)
+    ldap_schema = str(ldap_info.get("schema", ""))
+    ldap_base_dn = str(ldap_info.get("base_dn", ""))
+    ldap_bind_dn = str(ldap_info.get("bind_dn", ""))
+    ldap_bind_password = str(ldap_info.get("bind_password", ""))
+    ldap_tls = "true" if ldap_info.get("tls", False) else "false"
+else:
+    ldap_host = ""
+    ldap_port = "389"
+    ldap_schema = ""
+    ldap_base_dn = ""
+    ldap_bind_dn = ""
+    ldap_bind_password = ""
+    ldap_tls = "false"
+
+app_url = f"https://{domain_name}"
+
+agent.set_env("DOMAIN_NAME", domain_name)
+agent.set_env("LETS_ENCRYPT", "true" if lets_encrypt else "false")
+agent.set_env("HTTP2HTTPS", "true" if http2https else "false")
+agent.set_env("APP_URL", app_url)
+agent.set_env("ADMIN_USERNAME", admin_username)
+if admin_password:
+    agent.set_env("ADMIN_PASSWORD", admin_password)
+
+agent.set_env("LDAP_DOMAIN", ldap_domain)
+agent.set_env("LDAP_HOST", ldap_host)
+agent.set_env("LDAP_PORT", ldap_port)
+agent.set_env("LDAP_SCHEMA", ldap_schema)
+agent.set_env("LDAP_BASE_DN", ldap_base_dn)
+agent.set_env("LDAP_BIND_DN", ldap_bind_dn)
+agent.set_env("LDAP_BIND_PASSWORD", ldap_bind_password)
+agent.set_env("LDAP_TLS", ldap_tls)
+agent.dump_env()
+
+json.dump({"app_url": app_url}, sys.stdout)
