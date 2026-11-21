@@ -217,6 +217,8 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
-          IMAGETAG: ${{ github.ref_name }}
+          RAW_REF_NAME: ${{ github.ref_name }}
           TAG_LATEST: "1"
-        run: PUSH=1 bash ./build-images.sh
+        run: |
+          SEMVER_TAG="${RAW_REF_NAME#v}"
+          IMAGETAG="${SEMVER_TAG}" PUSH=1 bash ./build-images.sh
