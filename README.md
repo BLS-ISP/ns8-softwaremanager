@@ -1,163 +1,157 @@
 # NS8-SoftwareManager
 
-**NS8-SoftwareManager** ist ein natives, zentrales **Endpoint-, Betriebssystem-Patch- und Self-Service-Software-Management-Modul für NethServer 8 (NS8)** zur einheitlichen Verwaltung von **Windows-** und **Linux-Systemen** (Workstations & Server).
+**NS8-SoftwareManager** is a native, centralized **Endpoint, Operating System Patch, and Self-Service Software Management module for NethServer 8 (NS8)** designed to manage both **Windows** and **Linux** systems (workstations and headless servers) from a single web console.
 
-Inspiriert von *Microsoft Endpoint Configuration Manager (MECM) + Software Center* kombiniert das Modul eine zentrale Web-Verwaltungskonsole für IT-Administratoren mit einem lokalen **Software Center** auf den Endgeräten, über das freigegebene Anwendungen **ohne lokale Administratorrechte** installiert, aktualisiert oder (sofern erlaubt) deinstalliert werden können.
-
----
-
-## Funktionsumfang
-
-- **Plattformübergreifendes Flotten- & Inventar-Management:**
-  - Automatische Erfassung von Hardware (CPU, RAM, Datenträger), Betriebssystem/Kernel/Build, IP-Adressen, angemeldeten Benutzern, **Pending-Reboot-Status** sowie sämtlicher installierter Software (Delta-Synchronisation).
-  - Echtzeit-Online-Status und Live-Log-Streaming über ausgehende WebSockets (`WSS` über Port `443` hinter NS8-Traefik) inklusive automatischem HTTPS-Polling-Fallback – ideal für LAN, VPN und Homeoffice ohne eingehende Firewall-Freigaben auf den Clients.
-  - Gerätegruppen, Tags und mehrstufige Rollouts (*Pilot-Ring*, *Workstations*, *Server*).
-- **Moderne Admin-Web-Konsole (`web/`):**
-  - **Light- & Dark-Mode:** Umschaltbares helles und dunkles Erscheinungsbild (persistent in `localStorage` gespeichert + automatische `prefers-color-scheme`-Erkennung) mit kontraststarker Typografie, einheitlichem Markenlogo und nativen Windows-/Linux-Plattform-Badges.
-  - **Responsive Navigation & Barrierefreiheit:** Einklappbare Seitenleiste am Desktop, responsiver Navigations-Drawer für Mobilgeräte/Tablets, vollständige Tastaturbedienbarkeit (`Escape` schließt Dialoge, `aria-label` & Fokus-Management).
-  - **Sichere Bestätigungsdialoge & Live-Toasts:** Schutz vor versehentlichen destruktiven Aktionen (*Gerät sperren/löschen*, *Paket löschen*, *Bereitstellung aufheben*, *Token widerrufen*) über einen zentralen Bestätigungsdialog sowie nicht-intrusive Toast-Benachrichtigungen.
-- **Betriebssystem-Update-Management (OS Patching):**
-  - **Windows (10/11, Server 2019/2022/2025):** Direkte Ansteuerung des nativen *Windows Update Agent (WUA)* ohne WSUS-Zwang inkl. Schweregrad-Filter und zentraler KB-Ausschlussliste.
-  - **Linux (Debian/Ubuntu/Mint via `apt`, RHEL/Rocky/Alma/Fedora via `dnf`):** Wahlweise reine Sicherheitsupdates oder vollständige Paket-Upgrades im garantiert unbeaufsichtigten Modus (`noninteractive`).
-  - **Wartungsfenster & Neustart-Richtlinien:** Zeitfenster pro Gruppe (inkl. *Catch-up* für ausgeschaltete Laptops) sowie gesteuerte Reboot-Policies (*Nie automatisch neu starten*, *Automatisch im Wartungsfenster*, *Benutzer-Karenzzeit mit Snooze & Countdown*).
-- **Hybrider Software-Katalog & Eigenes Paket-Repository:**
-  - **Native Paketmanager:** `winget --scope machine` (Session-0/`SYSTEM`-sicher aufgelöst), `apt`, `dnf` und `flatpak`.
-  - **Eigenes NS8-Paket-Repository:** Chunked-Upload für große eigene Installer (`.msi`, `.exe`, `.zip`, `.deb`, `.rpm`, `.ps1`, `.sh`), unterbrechungssicherer `HTTP Range`-Download (`206 Partial Content`), *Detection Rules*, Prozess-Sperrprüfung (`blocked_processes`) und Exit-Code-Mapping (`0`, `3010`, `1641`).
-  - **Bereitstellungs-Modi:** *Pflicht (Required)*, *Verfügbar (Available / Self-Service)* und *Deinstallieren (Uninstall)* inkl. automatischer Drittanbieter-Updates.
-- **Single-Binary Endbenutzer „Software Center“ & System-Tray (`swm-center`):**
-  - **Einzeldatei-Bereitstellung (Zero External Assets):** Die komplette Vue-3-Oberfläche des Software Centers (`agent/crates/swm-center/ui/dist`) wird zur Compile-Zeit direkt in das `swm-center`-Binary eingebettet (`SWM_CENTER_UI_DIR` bleibt optional für Live-Entwicklung nutzbar). Dadurch lässt sich `swm-center.exe` bzw. `swm-center` ohne externe Asset-Ordner auf jedem Arbeitsplatz ausführen.
-  - **Natives System-Tray & Desktop-Benachrichtigungen:** Echtes Windows-System-Tray-Icon (`Shell_NotifyIconW` mit Rechtsklick-Schnellmenü für *Software Center öffnen*, *Nach Updates suchen* und *Neustart verschieben*) sowie native Betriebssystem-Benachrichtigungen (WinRT Toast unter Windows, `notify-send` / XDG-Autostart unter Linux) inklusive Light-/Dark-Mode.
-- **Vollständige NethServer-8-Integration:**
-  - Rootless Podman-Pod (`swm.service`, `swm-db.service` mit PostgreSQL 16, `swm-app.service`) strikt gebunden an `127.0.0.1:${TCP_PORT}:8080` hinter NS8-Traefik (inkl. Let's Encrypt).
-  - Offizielle NS8 Cluster-Admin Cockpit-UI (`de` & `en`), optionale Anbindung an NS8-Benutzerdomänen (Samba Active Directory / OpenLDAP) sowie Restic-Backup, Restore und Clone.
+Inspired by *Microsoft Endpoint Configuration Manager (MECM) + Software Center*, the module combines an administrative web console for IT teams with a lightweight local **Software Center** on desktop endpoints, allowing standard users to install, update, or (when permitted) uninstall approved applications **without local administrator privileges**.
 
 ---
 
-## Architektur & Projektstruktur
+## Key Features
+
+- **Cross-Platform Fleet & Inventory Management:**
+  - Automated discovery of hardware (CPU, RAM, disk capacity), OS/kernel/build versions, IP addresses, logged-in desktop users, **Pending Reboot** status, and full installed software inventory (delta-synced).
+  - Real-time online presence and live execution log streaming via outbound WebSockets (`WSS` over port `443` behind NS8 Traefik) with automatic HTTPS polling fallback — works across LAN, VPN, and remote/home-office networks with zero inbound firewall ports on clients.
+  - Device groups, tags, and phased rollout rings (*Pilot Ring*, *Workstations*, *Servers*).
+- **Modern Admin Web Console (`web/`):**
+  - **Light & Dark Mode:** Persistent theme switcher (`localStorage` + automatic `prefers-color-scheme` detection) with high-contrast typography, unified brand emblem, and native Windows/Linux SVG badges.
+  - **Responsive Navigation & Accessibility:** Collapsible desktop sidebar rail, mobile/tablet navigation drawer, and keyboard accessibility (`Escape` modal dismissal, ARIA labels, focus management).
+  - **Safe Confirmations & Live Toasts:** Built-in confirmation dialogs protecting destructive actions (*revoke/delete device*, *delete package*, *remove deployment*, *revoke enrollment token*) paired with non-intrusive toast notifications.
+- **Operating System Patch Management:**
+  - **Windows (10/11, Server 2019/2022/2025):** Direct integration with the native *Windows Update Agent (WUA)* without requiring WSUS, including severity filtering and centralized KB exclusion lists.
+  - **Linux (Debian/Ubuntu/Mint via `apt`, RHEL/Rocky/Alma/Fedora via `dnf`):** Supports security-only updates or full package upgrades in strictly unattended `noninteractive` mode.
+  - **Maintenance Windows & Reboot Policies:** Per-group maintenance schedules (including *Catch-up* execution for laptops that were powered off) and granular reboot policies (*Never reboot automatically*, *Reboot during maintenance window*, *User grace period with snooze & countdown*).
+- **Hybrid Software Catalog & Custom Package Repository:**
+  - **Native Package Managers:** `winget --scope machine` (safely resolved in Windows Session 0 / `NT AUTHORITY\SYSTEM`), `apt`, `dnf`, and `flatpak`.
+  - **Built-in NS8 Package Repository:** Chunked uploads for large custom installers (`.msi`, `.exe`, `.zip`, `.deb`, `.rpm`, `.ps1`, `.sh`), resumable `HTTP Range` downloads (`206 Partial Content`), *Detection Rules*, running-process guards (`blocked_processes`), and custom exit-code mapping (`0`, `3010`, `1641`).
+  - **Deployment Modes:** *Required* (automated install & 3rd-party version updates), *Available* (end-user self-service), and *Uninstall*.
+- **Single-Binary End-User "Software Center" & System Tray (`swm-center`):**
+  - **Zero External Assets:** The entire Vue 3 Software Center frontend (`agent/crates/swm-center/ui/dist`) is embedded directly into the `swm-center` binary at compile time (`SWM_CENTER_UI_DIR` remains available as an optional override during development). A standalone `swm-center.exe` or `swm-center` binary runs out of the box without external asset folders.
+  - **Native System Tray & Desktop Notifications:** Native Windows System Tray icon (`Shell_NotifyIconW` with right-click context menu for *Open Software Center*, *Check for Updates*, and *Snooze Reboot*) plus native OS notifications (WinRT Toast on Windows, `notify-send` / XDG autostart on Linux) with Light and Dark mode support.
+- **Full NethServer 8 Integration:**
+  - Rootless Podman pod (`swm.service`, `swm-db.service` running PostgreSQL 16, `swm-app.service`) bound strictly to `127.0.0.1:${TCP_PORT}:8080` behind NS8 Traefik (with automatic Let's Encrypt TLS).
+  - Official NS8 Cluster-Admin Cockpit UI (`en` & `de`), optional integration with NS8 User Domains (Samba Active Directory / OpenLDAP), and full Restic backup, restore, and clone support.
+
+---
+
+## Architecture & Directory Layout
 
 ```text
 NS8-SoftwareManager/
-├── Containerfile                  # Rootless NS8-Modul-Image (imageroot + Cockpit-UI)
-├── Containerfile.app              # Multi-Stage App-Image (FastAPI + Admin-SPA + eingebettete Linux/Win-Agenten)
-├── build-images.sh                # Dynamisches Build- & Push-Skript (automatischer GHCR-Namespace)
-├── CONTRACT.md                    # Verbindlicher API-, WebSocket- & Ed25519-Signaturvertrag
-├── REQUIREMENTS.md                # Fachliche Anforderungsanalyse & Architekturkonzept
-├── server/                        # Zentrales Python FastAPI Backend (SQLAlchemy 2 async + Scheduler)
-├── web/                           # Dediziertes Admin-Web-Portal (Vue 3 + TypeScript + Vite + TailwindCSS)
-├── agent/                         # Plattformübergreifender Rust-Workspace
+├── Containerfile                  # Rootless NS8 module image (imageroot + Cockpit UI)
+├── Containerfile.app              # Multi-stage app image (FastAPI + Admin SPA + bundled Linux/Win agents)
+├── build-images.sh                # Dynamic build & push script (auto-resolves GHCR namespace)
+├── CONTRACT.md                    # Canonical REST API, WebSocket, and Ed25519 signature specification
+├── REQUIREMENTS.md                # Functional requirements and architectural design notes
+├── server/                        # Central Python FastAPI backend (SQLAlchemy 2 async + scheduler)
+├── web/                           # Dedicated Admin Web Console (Vue 3 + TypeScript + Vite + TailwindCSS)
+├── agent/                         # Cross-platform Rust workspace
 │   ├── crates/
-│   │   ├── swm-common/            # Gemeinsame DTOs, Ed25519/SHA-256-Prüfung & lokales IPC-Protokoll
-│   │   ├── swm-agent/             # Privilegierter Hintergrunddienst (Windows Service / systemd)
-│   │   └── swm-center/            # Single-Binary Desktop- & Tray-App („Software Center“ + eingebettete Vue-3-UI)
-│   └── packaging/                 # Bootstrap-Skripte, systemd-Units, XDG-Autostart, WiX (.wxs) & nFPM (.deb/.rpm)
-├── imageroot/                     # NS8 Modul-Actions, Systemd-User-Units & Restic-Backup-Hooks
-├── ui/                            # NS8 Cluster-Admin Cockpit-UI (Vue 2 + @nethserver/ns8-ui-lib)
-└── prebuilt-agents/windows/       # Staging-Ordner für vorab gebaute Windows-Binaries (.exe) im Image-Build
+│   │   ├── swm-common/            # Shared DTOs, Ed25519/SHA-256 verification & local IPC protocol
+│   │   ├── swm-agent/             # Privileged background service (Windows Service / systemd)
+│   │   └── swm-center/            # Single-binary desktop & tray app ("Software Center" + embedded Vue 3 UI)
+│   └── packaging/                 # Bootstrap scripts, systemd units, XDG autostart, WiX (.wxs) & nFPM (.deb/.rpm)
+├── imageroot/                     # NS8 module actions, systemd user units & Restic backup hooks
+├── ui/                            # NS8 Cluster-Admin Cockpit UI (Vue 2 + @nethserver/ns8-ui-lib)
+└── prebuilt-agents/windows/       # Staging directory for precompiled Windows binaries (.exe) during image builds
 ```
 
-### Sicherheitsmodell
+### Security Model
 
-1. **Kryptografische Auftrags- & Katalog-Signierung (`Ed25519`):** Der Server erzeugt beim Erststart ein persistentes `Ed25519`-Schlüsselpaar (`/data/keys/`). Jeder Auftrag (`SignedJob`) und jeder Self-Service-Katalogeintrag (`SignedCatalogItem`) wird kanonisch signiert und vom `swm-agent` vor jeder Ausführung gegen den hinterlegten Server-Public-Key sowie das Ablaufdatum (`expires_at_unix`) geprüft.
-2. **Verpflichtende `SHA-256`-Prüfung:** Jedes vom Server geladene Installationspaket oder Agent-Update wird vor der Ausführung vollständig gegen seinen `SHA-256`-Hash verifiziert.
-3. **Strikte Privilegientrennung (Local IPC):** `swm-center` läuft ausschließlich mit normalen Benutzerrechten und spricht über eine abgesicherte lokale Schnittstelle (Windows Named Pipe `\\.\pipe\ns8-swm-ipc` bzw. Linux Unix Socket `/run/ns8-swm/ipc.sock`) mit `swm-agent`. Freie Befehlszeilen oder fremde URLs können strukturell nicht übergeben werden – erlaubt ist nur das Auslösen bereits vom Server `Ed25519`-signierter Paket-IDs.
+1. **Cryptographic Job & Catalog Signing (`Ed25519`):** On first startup, the server generates a persistent `Ed25519` keypair (`/data/keys/`). Every job (`SignedJob`) and self-service catalog manifest (`SignedCatalogItem`) is canonically signed by the server and verified by `swm-agent` against the pinned server public key and expiration timestamp (`expires_at_unix`) before execution.
+2. **Mandatory `SHA-256` Integrity Verification:** Every custom installer archive or agent self-update binary downloaded from the server is verified against its expected `SHA-256` digest prior to execution.
+3. **Strict Privilege Separation (Local IPC):** `swm-center` runs strictly as an unprivileged standard user process and communicates with `swm-agent` over a local IPC channel (Windows Named Pipe `\\.\pipe\ns8-swm-ipc` with SDDL ACLs & `PIPE_REJECT_REMOTE_CLIENTS`, or Linux Unix Domain Socket `/run/ns8-swm/ipc.sock`). Arbitrary shell commands or external URLs cannot be passed over IPC — callers can only trigger `package_id`s already present in `swm-agent`'s `Ed25519`-verified catalog.
 
 ---
 
-## Installation auf NethServer 8 (inkl. eigener GHCR-Namespace)
+## Installation on NethServer 8
 
-### 1. Modul auf dem NS8-Cluster installieren
+### 1. Install the Module on Your NS8 Cluster
 
-Auf dem NS8-Leader- oder Ziel-Knoten als `root` (Standard-Namespace oder eigener GitHub-Account / eigene Organisation in Kleinbuchstaben):
+Run as `root` on the NS8 leader or target node:
 
 ```bash
-# Standard-Installation (BLS-ISP GHCR-Repository):
+# Latest build:
 add-module ghcr.io/bls-isp/softwaremanager:latest 1
 
-# Oder eine gezielte Release-Version:
+# Specific release tag:
 add-module ghcr.io/bls-isp/softwaremanager:v1.0.0 1
 ```
 
-### 2. Instanz im NS8 Cluster-Admin konfigurieren
+> **Note for Private GHCR Packages:** If the container packages under `ghcr.io/bls-isp` are set to private visibility, either switch `softwaremanager` and `softwaremanager-app` to *Public* in GitHub *Package settings*, or authenticate Podman on the NS8 node beforehand via `podman login ghcr.io`.
 
-1. Im **NS8 Cluster-Admin** die installierte **SoftwareManager**-Instanz öffnen und zu **Einstellungen** wechseln.
-2. **SoftwareManager-Hostname (FQDN)** eintragen (z. B. `swm.firma.de`) sowie optional **Let's-Encrypt-Zertifikat** und **HTTP-zu-HTTPS-Weiterleitung** aktivieren.
-3. Optional eine **NS8-Benutzerdomäne (Active Directory / OpenLDAP)** für die zentrale Administrator-Anmeldung auswählen und bei Bedarf das Passwort des lokalen Fallback-Administrators setzen.
-4. Auf **Konfiguration speichern** klicken und anschließend über **SoftwareManager-Admin-Konsole öffnen** (`https://swm.firma.de`) das zentrale Verwaltungsportal starten.
+### 2. Configure the Instance in NS8 Cluster-Admin
+
+1. Open **NS8 Cluster-Admin**, select the installed **SoftwareManager** instance, and navigate to **Settings**.
+2. Enter the **SoftwareManager Hostname (FQDN)** (e.g. `swm.example.com`) and optionally enable **Let's Encrypt Certificate** and **HTTP to HTTPS Redirect**.
+3. Optionally select an **NS8 User Domain (Active Directory / OpenLDAP)** for centralized administrator authentication and configure the local fallback admin credentials if needed.
+4. Click **Save configuration**, then launch the **SoftwareManager Admin Console** (`https://swm.example.com`).
 
 ### 3. Backup, Restore & Clone
 
-Das Modul integriert sich vollständig in das NS8-Restic-Backup (`imageroot/etc/state-include.conf` & `module-dump-state`): Gesichert werden der konsistente PostgreSQL-Datenbank-Dump, die Modul-Umgebungsvariablen, die `Ed25519`-Signaturschlüssel sowie alle eigenen hochgeladenen Software-Pakete im Volume `swm-app-data`.
+The module integrates natively with NS8 Restic cluster backups (`imageroot/etc/state-include.conf` & `module-dump-state`), backing up a consistent PostgreSQL database dump, module environment state, `Ed25519` signing keys, and all uploaded custom software packages stored in the `swm-app-data` volume.
 
 ---
 
-## Client-Onboarding (Windows & Linux)
+## Client Onboarding (Windows & Linux)
 
-1. In der **SoftwareManager-Admin-Konsole** unter **Client-Enrollment** ein neues Enrollment-Token anlegen (optional mit Ablaufzeit, maximaler Nutzungsanzahl, Zielgruppe und direkter Auto-Freigabe oder *Pending Approval*).
-2. Den angezeigten Bootstrap-Einzeiler auf dem Zielsystem mit Administrator- bzw. `root`-Rechten ausführen:
+1. In the **SoftwareManager Admin Console**, open **Client-Enrollment** and generate an enrollment token (optionally scoped with expiration time, maximum uses, target device group, and auto-approval vs. *Pending Approval*).
+2. Run the generated one-line bootstrap command on the target endpoint with Administrator / `root` privileges:
 
-### Windows (PowerShell als Administrator)
+### Windows (Elevated PowerShell)
 
-Workstation (inkl. Windows-Dienst `swm-agent.exe` + Single-Binary System-Tray **Software Center** `swm-center.exe` im Autostart):
-
-```powershell
-irm "https://swm.firma.de/dl/install.ps1?token=<ENROLLMENT_TOKEN>&headless=0" | iex
-```
-
-Windows-Server (Headless – nur Hintergrunddienst `swm-agent.exe`):
+Workstation (installs the `swm-agent.exe` Windows Service + single-binary System Tray **Software Center** `swm-center.exe` in Windows startup):
 
 ```powershell
-irm "https://swm.firma.de/dl/install.ps1?token=<ENROLLMENT_TOKEN>&headless=1" | iex
+irm "https://swm.example.com/dl/install.ps1?token=<ENROLLMENT_TOKEN>&headless=0" | iex
 ```
 
-### Linux (Debian/Ubuntu/Mint & RHEL/Rocky/Alma/Fedora als `root`)
+Windows Server (headless — installs `swm-agent.exe` background service only):
 
-Linux-Desktop (inkl. `swm-center` & XDG-Autostart):
+```powershell
+irm "https://swm.example.com/dl/install.ps1?token=<ENROLLMENT_TOKEN>&headless=1" | iex
+```
+
+### Linux (Debian/Ubuntu/Mint & RHEL/Rocky/Alma/Fedora as `root`)
+
+Linux Desktop (installs `swm-agent`, `swm-center`, and XDG desktop autostart):
 
 ```bash
-curl -fsSL "https://swm.firma.de/dl/install.sh?token=<ENROLLMENT_TOKEN>&headless=0" | sudo bash
+curl -fsSL "https://swm.example.com/dl/install.sh?token=<ENROLLMENT_TOKEN>&headless=0" | sudo bash
 ```
 
-Linux-Server (Headless – nur `systemd`-Dienst `swm-agent.service`):
+Linux Server (headless — installs `swm-agent.service` systemd daemon only):
 
 ```bash
-curl -fsSL "https://swm.firma.de/dl/install.sh?token=<ENROLLMENT_TOKEN>&headless=1" | sudo bash
+curl -fsSL "https://swm.example.com/dl/install.sh?token=<ENROLLMENT_TOKEN>&headless=1" | sudo bash
 ```
 
-Alternativ erzeugt die GitHub-Actions-Pipeline bei jedem Lauf fertige **`.deb`- und `.rpm`-Client-Pakete** (`ns8-swm-agent`) über `nFPM` (`agent/packaging/nfpm.yaml`) sowie kompilierte Windows-Binaries als Download-Artefakte.
+Alternatively, every GitHub Actions workflow run produces ready-to-install **`.deb` and `.rpm` client packages** (`ns8-swm-agent`) via `nFPM` (`agent/packaging/nfpm.yaml`) alongside standalone Windows and Linux release binaries.
 
 ---
 
-## Automatisierter CI/CD- & Release-Tag-Workflow (`.github/workflows/build-and-test.yml`)
+## Automated CI/CD & Release Workflow (`.github/workflows/build-and-test.yml`)
 
-Das Projekt bringt eine vollständige GitHub-Actions-Pipeline mit, die ohne manuelle Skript-Anpassungen in jedem GitHub-Account oder Organisations-Fork funktioniert:
+The repository includes an automated GitHub Actions pipeline that runs tests, builds cross-platform client binaries, and publishes NS8 container images:
 
-1. **Dynamischer GHCR-Namespace (`REPOBASE`):**
-   `build-images.sh` ermittelt automatisch `REPOBASE="${REPOBASE:-ghcr.io/${GITHUB_REPOSITORY_OWNER:-bls-isp}}"` (automatisch in Kleinbuchstaben konvertiert). Das Repository `github.com/BLS-ISP/ns8-softwaremanager` publiziert seine Images direkt nach `ghcr.io/bls-isp/softwaremanager` und `ghcr.io/bls-isp/softwaremanager-app`.
-2. **Garantierte Embedded-UI-Reihenfolge:**
-   Sowohl in der CI-Matrix als auch im mehrstufigen `Containerfile.app` wird zuerst `agent/crates/swm-center/ui` gebaut und vor `cargo build --release --workspace` nach `agent/crates/swm-center/ui/dist` kopiert, sodass `swm-center` garantiert die aktuelle Vue-3-Oberfläche einbettet (zusätzlich liegt `/app/agents/linux/swm-center-ui` als Backup im App-Container).
-3. **Client-Artefakte (`.deb`, `.rpm`, `.exe`):**
-   Jeder Workflow-Lauf kompiliert `swm-agent` und `swm-center` für Linux (`x86_64`) und Windows (`x86_64`), baut über `nFPM` installierbare `.deb`- und `.rpm`-Pakete und stellt alle Pakete als GitHub-Actions-Artefakte bereit (`linux-client-packages-deb-rpm`, `agents-linux-amd64`, `agents-windows-amd64`).
-4. **Automatische GHCR-Veröffentlichung per Versions-Tag (`v*`):**
-   Wird ein Versions-Tag der Form `v*` gepusht, meldet sich der Job `package-ns8-images` automatisch mit `GITHUB_TOKEN` an `ghcr.io` an und veröffentlicht sowohl den Versions-Tag (z. B. `:v1.0.0`) als auch `:latest`:
+1. **Dynamic GHCR Namespace (`REPOBASE`):**
+   `build-images.sh` automatically resolves `REPOBASE="${REPOBASE:-ghcr.io/${GITHUB_REPOSITORY_OWNER:-bls-isp}}"` (normalized to lowercase), publishing images to `ghcr.io/bls-isp/softwaremanager` and `ghcr.io/bls-isp/softwaremanager-app` (or automatically adapting to forks).
+2. **Guaranteed Embedded-UI Build Order:**
+   Both the CI matrix and the multi-stage `Containerfile.app` build `agent/crates/swm-center/ui` first and stage `ui/dist` prior to running `cargo build --release --workspace`, guaranteeing that `swm-center` embeds the latest compiled Vue 3 assets.
+3. **Client Artifacts (`.deb`, `.rpm`, `.exe`):**
+   Every CI run compiles `swm-agent` and `swm-center` for Linux (`x86_64`) and Windows (`x86_64`), builds `.deb` and `.rpm` packages via `nFPM`, and uploads them as workflow artifacts (`linux-client-packages-deb-rpm`, `agents-linux-amd64`, `agents-windows-amd64`).
+4. **Automatic GHCR Publishing on Branch Pushes & Release Tags (`v*`):**
+   Pushing to `main` or pushing a semantic version tag (`v*`) automatically authenticates to `ghcr.io` with `GITHUB_TOKEN` and publishes both the version/branch tag and `:latest`:
 
    ```bash
-   git tag v1.0.0
+   git tag -a v1.0.0 -m "Release v1.0.0"
    git push origin v1.0.0
    ```
 
-   Anschließend ist das Modul sofort auf jedem NS8-Cluster installierbar via:
-
-   ```bash
-   add-module ghcr.io/bls-isp/softwaremanager:v1.0.0 1
-   # bzw.
-   add-module ghcr.io/bls-isp/softwaremanager:latest 1
-   ```
-
 ---
 
-## Lokale Entwicklung, Tests & Image-Build
+## Local Development, Testing & Image Builds
 
-### 1. Backend & NS8-Regel-Tests (`Python 3.12+`)
+### 1. Backend & NS8 Compliance Tests (`Python 3.12+`)
 
 ```bash
 python -m pip install -r server/requirements.txt
@@ -165,14 +159,14 @@ python -m pytest server/tests -v
 python -m compileall server/app imageroot
 ```
 
-Lokaler Entwicklungsstart des Servers:
+Run the backend locally in development mode:
 
 ```bash
 cd server
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
 ```
 
-### 2. Admin-Web-Konsole (`Node.js 20+`)
+### 2. Admin Web Console (`Node.js 20+`)
 
 ```bash
 npm --prefix web install
@@ -180,14 +174,14 @@ npm --prefix web test -- --run
 npm --prefix web run build
 ```
 
-### 3. NS8 Cluster-Admin Cockpit-UI (`Node.js 20+`)
+### 3. NS8 Cluster-Admin Cockpit UI (`Node.js 20+`)
 
 ```bash
 npm --prefix ui install --legacy-peer-deps
 npm --prefix ui run build
 ```
 
-### 4. Rust-Agent & Software Center (`Rust 1.85+` & `Node.js 20+`)
+### 4. Rust Agent & Software Center (`Rust 1.85+` & `Node.js 20+`)
 
 ```bash
 npm --prefix agent/crates/swm-center/ui install
@@ -198,20 +192,20 @@ cargo test --manifest-path agent/Cargo.toml --workspace
 cargo build --release --manifest-path agent/Cargo.toml --workspace
 ```
 
-### 5. Container-Images lokal bauen (`Podman` / `Docker`)
+### 5. Build Container Images Locally (`Podman` / `Docker`)
 
-Um bei einem lokalen Build optional auch vorab kompilierte Windows-Binaries (`swm-agent.exe`, `swm-center.exe`) in das App-Image einzubetten, diese zuvor nach `prebuilt-agents/windows/` kopieren (in GitHub Actions geschieht dies automatisch aus dem `agents-windows-amd64`-Artefakt):
+To optionally bundle precompiled Windows binaries (`swm-agent.exe`, `swm-center.exe`) during a local image build, copy them into `prebuilt-agents/windows/` beforehand (in GitHub Actions this is handled automatically from the `agents-windows-amd64` artifact):
 
 ```bash
-REPOBASE=ghcr.io/mein-namespace IMAGETAG=latest bash ./build-images.sh
+REPOBASE=ghcr.io/bls-isp IMAGETAG=latest bash ./build-images.sh
 ```
 
-Dies erzeugt beide Container-Images:
-- `ghcr.io/mein-namespace/softwaremanager-app:latest` (FastAPI-Server + gebaute Vue-3-Admin-Konsole + Linux- & Windows-Client-Binaries)
-- `ghcr.io/mein-namespace/softwaremanager:latest` (Rootless NS8-Modul-Image mit `imageroot/` und gebauter Cockpit-UI `ui/`)
+This produces both container images:
+- `ghcr.io/bls-isp/softwaremanager-app:latest` (FastAPI server + compiled Vue 3 Admin SPA + Linux & Windows client binaries)
+- `ghcr.io/bls-isp/softwaremanager:latest` (Rootless NS8 module image containing `imageroot/` and compiled Cockpit UI `ui/`)
 
 ---
 
-## Lizenz
+## License
 
-Veröffentlicht unter der **GPL-3.0-or-later** Lizenz.
+Licensed under the **GPL-3.0-or-later** license.
