@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# Server runtime data & local databases
+server/data/
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.key
+
+# Rust / Cargo / Tauri
+agent/target/
+**/target/
+
+# Node / Frontend builds
+node_modules/
+**/node_modules/
+web/dist/
+ui/dist/
+agent/crates/swm-center/ui/dist/
+*.tsbuildinfo
+
+# Environment & IDE
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
