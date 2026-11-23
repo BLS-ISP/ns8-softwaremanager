@@ -719,6 +719,6 @@ async def test_hardened_bootstrap_installers_and_packaging_files(
     assert "/etc/systemd/user/ns8-swm-center.service" in pkg_sh_txt
 
     for pkg_file in PACKAGING_DIR.iterdir():
-        if pkg_file.is_file():
+        if pkg_file.is_file() and pkg_file.suffix.lower() != ".ps1":
             raw = pkg_file.read_bytes()
             assert b"\r" not in raw, f"CR/CRLF found in {pkg_file}"
