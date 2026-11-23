@@ -192,6 +192,10 @@ export default {
     return {
       Save20,
       Launch20,
+      q: {
+        page: "settings",
+      },
+      urlCheckInterval: null,
       domain_name: "",
       lets_encrypt: false,
       http2https: true,
@@ -237,6 +241,18 @@ export default {
       }
       return options;
     },
+  },
+  beforeRouteEnter(to, from, next) {
+    next((vm) => {
+      if (window.parent && window.parent.core && window.parent.core.$route) {
+        vm.watchQueryData(vm);
+        vm.urlCheckInterval = vm.initUrlBindingForApp(vm, vm.q.page);
+      }
+    });
+  },
+  beforeRouteLeave(to, from, next) {
+    clearInterval(this.urlCheckInterval);
+    next();
   },
   created() {
     if (this.core && this.instanceName) {

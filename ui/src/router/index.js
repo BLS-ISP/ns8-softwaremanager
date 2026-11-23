@@ -9,12 +9,9 @@ Vue.use(VueRouter);
 const routes = [
   {
     path: "/",
-    redirect: "/status",
-  },
-  {
-    path: "/status",
     name: "Status",
     component: Status,
+    alias: "/status",
   },
   {
     path: "/settings",
@@ -29,7 +26,6 @@ const routes = [
 ];
 
 const router = new VueRouter({
-  mode: "hash",
   base: process.env.BASE_URL,
   routes,
 });

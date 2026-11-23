@@ -3,6 +3,11 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.3] - 2026-11-23
+
+### Fixed
+- **NS8 Cockpit Settings & Subpage Navigation (`ui/`):** Replaced invalid parent router pushes (`/apps/<instance>/settings`) with `@nethserver/ns8-ui-lib`'s official `goToAppPage(instanceName, page)` (`?page=settings`), wired `changeRoute` and initial `?page=` query-parameter handling in `App.vue`, added `initUrlBindingForApp` lifecycle hooks across `Status.vue`, `Settings.vue`, and `About.vue`, and normalized `list-backup-repositories` output parsing.
+
 ## [1.0.2] - 2026-11-23
 
 ### Fixed

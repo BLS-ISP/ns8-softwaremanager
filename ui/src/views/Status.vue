@@ -259,6 +259,10 @@ export default {
       Application32,
       EdgeNode32,
       Cube32,
+      q: {
+        page: "status",
+      },
+      urlCheckInterval: null,
       status: null,
       config: null,
       backupRepositories: [],
@@ -270,6 +274,18 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+  },
+  beforeRouteEnter(to, from, next) {
+    next((vm) => {
+      if (window.parent && window.parent.core && window.parent.core.$route) {
+        vm.watchQueryData(vm);
+        vm.urlCheckInterval = vm.initUrlBindingForApp(vm, vm.q.page);
+      }
+    });
+  },
+  beforeRouteLeave(to, from, next) {
+    clearInterval(this.urlCheckInterval);
+    next();
   },
   created() {
     if (this.core && this.instanceName) {
@@ -287,9 +303,9 @@ export default {
     },
     goToSettings() {
       if (this.core && this.core.$router) {
-        this.core.$router.push(`/apps/${this.instanceName}/settings`);
+        this.goToAppPage(this.instanceName, "settings");
       } else {
-        this.$router.push("/settings");
+        this.$router.push("/settings").catch(() => {});
       }
     },
     async getStatus() {
@@ -418,7 +434,12 @@ export default {
       this.loadingBackups = false;
     },
     async listBackupRepositoriesCompleted(taskContext, taskResult) {
-      this.backupRepositories = taskResult.output || [];
+      const out = (taskResult && taskResult.output) || {};
+      this.backupRepositories = Array.isArray(out)
+        ? out
+        : Array.isArray(out.repositories)
+        ? out.repositories
+        : [];
       await this.listBackups();
     },
     async listBackups() {

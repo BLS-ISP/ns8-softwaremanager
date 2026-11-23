@@ -128,6 +128,10 @@ export default {
   data() {
     return {
       Launch20,
+      q: {
+        page: "about",
+      },
+      urlCheckInterval: null,
       app: null,
       version: "",
       loading: {
@@ -142,6 +146,18 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "core", "appName"]),
+  },
+  beforeRouteEnter(to, from, next) {
+    next((vm) => {
+      if (window.parent && window.parent.core && window.parent.core.$route) {
+        vm.watchQueryData(vm);
+        vm.urlCheckInterval = vm.initUrlBindingForApp(vm, vm.q.page);
+      }
+    });
+  },
+  beforeRouteLeave(to, from, next) {
+    clearInterval(this.urlCheckInterval);
+    next();
   },
   created() {
     this.getModuleInfo();

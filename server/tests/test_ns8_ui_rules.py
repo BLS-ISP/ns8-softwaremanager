@@ -103,3 +103,27 @@ def test_ns8_ui_rule_3_i18n_locales_and_mandatory_keys() -> None:
             assert isinstance(val, str) and val.strip(), (
                 f"Missing mandatory NS8 i18n key '{key}' in {lang}/translation.json"
             )
+
+
+def test_ns8_ui_rule_4_iframe_navigation_and_query_param_routing() -> None:
+    """UI Rule 4: Never push `/apps/<id>/<subpage>` on parent router; use 2-arg goToAppPage(instanceName, page) + changeRoute."""
+    app_vue = (UI_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+    side_menu = (UI_DIR / "src" / "components" / "AppSideMenuContent.vue").read_text(
+        encoding="utf-8"
+    )
+    status_vue = (UI_DIR / "src" / "views" / "Status.vue").read_text(encoding="utf-8")
+
+    assert 'addEventListener("changeRoute"' in app_vue or "addEventListener('changeRoute'" in app_vue
+    assert "getQueryParamsForApp()" in app_vue
+
+    # AppSideMenuContent must delegate to ns8-ui-lib's 2-arg goToAppPage(instanceName, page)
+    assert "goToAppPage(this.instanceName, page)" in side_menu
+    assert "goToAppPage(path)" not in side_menu
+
+    # Status.vue must navigate via goToAppPage(this.instanceName, "settings"), never `/apps/.../settings`
+    assert 'goToAppPage(this.instanceName, "settings")' in status_vue
+    for vue_path in (UI_DIR / "src").rglob("*.vue"):
+        txt = vue_path.read_text(encoding="utf-8")
+        assert "/settings`" not in txt, (
+            f"{vue_path.name} pushes invalid parent sub-route `/apps/.../settings` instead of `?page=settings`"
+        )

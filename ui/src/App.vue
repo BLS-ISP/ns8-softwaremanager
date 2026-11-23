@@ -20,7 +20,6 @@ import {
 import to from "await-to-js";
 import AppSideMenuContent from "./components/AppSideMenuContent.vue";
 import AppMobileSideMenu from "./components/AppMobileSideMenu.vue";
-import { loadLanguageAsync } from "./i18n";
 
 export default {
   name: "App",
@@ -31,8 +30,22 @@ export default {
   mixins: [QueryParamService, TaskService, UtilService],
   computed: {
     ...mapState(["instanceName", "core"]),
+    coreLocale() {
+      return this.core && this.core.$i18n ? this.core.$i18n.locale : null;
+    },
   },
-  async created() {
+  watch: {
+    coreLocale(newLang) {
+      if (!newLang) {
+        return;
+      }
+      const normalized = String(newLang).substring(0, 2).toLowerCase();
+      if (normalized === "en" || normalized === "de") {
+        this.$i18n.locale = normalized;
+      }
+    },
+  },
+  created() {
     const core = window.parent && window.parent.core ? window.parent.core : null;
     this.setCoreInStore(core);
 
@@ -40,25 +53,42 @@ export default {
     const hashMatch =
       window.parent &&
       window.parent.location &&
-      window.parent.location.hash.match(/#\/apps\/([a-zA-Z0-9_-]+)/);
+      /#\/apps\/([a-zA-Z0-9_-]+)/.exec(window.parent.location.hash);
     if (hashMatch && hashMatch[1]) {
       instanceName = hashMatch[1];
     }
     this.setInstanceNameInStore(instanceName);
 
-    // Sync active user locale with NS8 core (fallback en, preloaded en + de)
+    // Sync active user locale synchronously (en + de are pre-bundled in main.js)
     if (core && core.$i18n && core.$i18n.locale) {
-      await loadLanguageAsync(core.$i18n.locale, this.$i18n);
+      const normalized = String(core.$i18n.locale).substring(0, 2).toLowerCase();
+      if (normalized === "en" || normalized === "de") {
+        this.$i18n.locale = normalized;
+      }
     }
 
+    // Listen for route changes dispatched by NS8 core shell (`?page=...`)
+    this.onChangeRoute = (e) => {
+      const requestedPage = (e && e.detail) || "status";
+      this.navigateInternalPage(requestedPage);
+    };
+    window.addEventListener("changeRoute", this.onChangeRoute, false);
+
     if (core && core.$root) {
-      core.$root.$on("configureKeyboardShortcuts", this.configureKeyboardShortcuts);
+      core.$root.$emit("configureKeyboardShortcuts", window);
       this.retrieveInstanceLabel();
+    }
+
+    // Honor initial `?page=` query parameter from NS8 parent URL (e.g. `?page=settings`)
+    const queryParams = this.getQueryParamsForApp();
+    const requestedPage = (queryParams && queryParams.page) || "status";
+    if (requestedPage !== "status") {
+      this.navigateInternalPage(requestedPage);
     }
   },
   beforeDestroy() {
-    if (this.core && this.core.$root) {
-      this.core.$root.$off("configureKeyboardShortcuts", this.configureKeyboardShortcuts);
+    if (this.onChangeRoute) {
+      window.removeEventListener("changeRoute", this.onChangeRoute, false);
     }
   },
   methods: {
@@ -67,8 +97,13 @@ export default {
       "setInstanceLabelInStore",
       "setCoreInStore",
     ]),
-    configureKeyboardShortcuts() {
-      // Handled by NS8 core shell
+    navigateInternalPage(page) {
+      const clean = String(page || "status").replace(/^\/+/, "") || "status";
+      const targetPath = "/" + clean;
+      if (this.$route.path !== targetPath) {
+        this.$router.replace(targetPath).catch(() => {});
+      }
+      this.$root.$emit("appNavigation");
     },
     async retrieveInstanceLabel() {
       if (!this.core || !this.instanceName) {

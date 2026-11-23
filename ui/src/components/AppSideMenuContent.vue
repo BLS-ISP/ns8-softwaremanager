@@ -8,8 +8,9 @@
 
     <cv-side-nav-items>
       <cv-side-nav-link
-        @click="goToAppPage(instanceName + '/status')"
+        @click="navigateToPage('status')"
         :active="isLinkActive('status')"
+        :class="{ 'current-page': isLinkActive('status') }"
       >
         <template v-slot:nav-icon>
           <Activity20 />
@@ -18,8 +19,9 @@
       </cv-side-nav-link>
 
       <cv-side-nav-link
-        @click="goToAppPage(instanceName + '/settings')"
+        @click="navigateToPage('settings')"
         :active="isLinkActive('settings')"
+        :class="{ 'current-page': isLinkActive('settings') }"
       >
         <template v-slot:nav-icon>
           <Settings20 />
@@ -28,8 +30,9 @@
       </cv-side-nav-link>
 
       <cv-side-nav-link
-        @click="goToAppPage(instanceName + '/about')"
+        @click="navigateToPage('about')"
         :active="isLinkActive('about')"
+        :class="{ 'current-page': isLinkActive('about') }"
       >
         <template v-slot:nav-icon>
           <Information20 />
@@ -42,7 +45,7 @@
 
 <script>
 import { mapState } from "vuex";
-import { UtilService } from "@nethserver/ns8-ui-lib";
+import { QueryParamService, UtilService } from "@nethserver/ns8-ui-lib";
 import Activity20 from "@carbon/icons-vue/es/activity/20";
 import Settings20 from "@carbon/icons-vue/es/settings/20";
 import Information20 from "@carbon/icons-vue/es/information/20";
@@ -54,20 +57,38 @@ export default {
     Settings20,
     Information20,
   },
-  mixins: [UtilService],
+  mixins: [QueryParamService, UtilService],
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core"]),
   },
+  created() {
+    this.$root.$on("appNavigation", this.onAppNavigation);
+  },
+  beforeDestroy() {
+    this.$root.$off("appNavigation", this.onAppNavigation);
+  },
   methods: {
-    isLinkActive(page) {
-      return this.$route.path.includes(`/${page}`);
+    onAppNavigation() {
+      this.$forceUpdate();
     },
-    goToAppPage(path) {
-      const targetPage = path.split("/")[1] || "status";
+    isLinkActive(page) {
+      if (this.core && typeof this.getPage === "function") {
+        const currentPage = this.getPage();
+        if (currentPage) {
+          return currentPage === page;
+        }
+      }
+      if (page === "status" && this.$route.path === "/") {
+        return true;
+      }
+      return this.$route.path === `/${page}`;
+    },
+    navigateToPage(page) {
       if (this.core && this.core.$router) {
-        this.core.$router.push(`/apps/${path}`);
-      } else if (this.$route.path !== `/${targetPage}`) {
-        this.$router.push(`/${targetPage}`);
+        // Official @nethserver/ns8-ui-lib UtilService method: navigates parent to `/apps/<instanceName>?page=<page>`
+        this.goToAppPage(this.instanceName, page);
+      } else if (this.$route.path !== `/${page}`) {
+        this.$router.push(`/${page}`).catch(() => {});
       }
       this.$store.dispatch("setAppSideMenuShownInStore", false);
     },
