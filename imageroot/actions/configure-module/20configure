@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import agent
-from agent.ldapproxy import LdapDiscovery
+from agent.ldapproxy import Ldapproxy
 
 data = json.load(sys.stdin)
 
@@ -36,18 +36,20 @@ route_response = agent.tasks.run(
 )
 agent.assert_exp(route_response["exit_code"] == 0)
 
-# Resolve optional NS8 User-Domain (Samba AD / OpenLDAP) via LdapDiscovery
+# Resolve optional NS8 User-Domain (Samba AD / OpenLDAP) via Ldapproxy
 if ldap_domain:
-    ldap_info = LdapDiscovery().get_domain(ldap_domain)
+    ldap_info = Ldapproxy().get_domain(ldap_domain)
     raw_ldap_host = str(ldap_info.get("host", "")).strip()
+    is_local_proxy = raw_ldap_host in ("127.0.0.1", "localhost", "")
     # Inside rootless Podman with slirp4netns:allow_host_loopback=true, host 127.0.0.1 is 10.0.2.2
-    ldap_host = "10.0.2.2" if raw_ldap_host in ("127.0.0.1", "localhost") else raw_ldap_host
+    # and NS8 local ldapproxy always speaks plain LDAP (terminating TLS upstream).
+    ldap_host = "10.0.2.2" if is_local_proxy else raw_ldap_host
     ldap_port = str(ldap_info.get("port") or 389)
     ldap_schema = str(ldap_info.get("schema", ""))
     ldap_base_dn = str(ldap_info.get("base_dn", ""))
     ldap_bind_dn = str(ldap_info.get("bind_dn", ""))
     ldap_bind_password = str(ldap_info.get("bind_password", ""))
-    ldap_tls = "true" if ldap_info.get("tls", False) else "false"
+    ldap_tls = "false" if is_local_proxy else ("true" if ldap_info.get("tls", False) else "false")
 else:
     ldap_host = ""
     ldap_port = "389"
@@ -59,6 +61,7 @@ else:
 
 app_url = f"https://{domain_name}"
 
+agent.set_env("TCP_PORT", str(tcp_port))
 agent.set_env("DOMAIN_NAME", domain_name)
 agent.set_env("LETS_ENCRYPT", "true" if lets_encrypt else "false")
 agent.set_env("HTTP2HTTPS", "true" if http2https else "false")

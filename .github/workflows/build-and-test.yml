@@ -173,12 +173,22 @@ jobs:
           name: agents-windows-amd64
           path: prebuilt-agents/windows
 
-      - name: Verify staged Windows binaries
+      - name: Download prebuilt Linux client binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: agents-linux-amd64
+          path: prebuilt-agents/linux
+
+      - name: Verify staged Windows & Linux binaries
         run: |
           find prebuilt-agents/windows -mindepth 2 -type f -name "*.exe" -exec mv -f {} prebuilt-agents/windows/ \; || true
+          find prebuilt-agents/linux -mindepth 2 -type f \( -name "swm-agent" -o -name "swm-center" \) -exec mv -f {} prebuilt-agents/linux/ \; || true
+          chmod +x prebuilt-agents/linux/swm-agent prebuilt-agents/linux/swm-center
           test -f prebuilt-agents/windows/swm-agent.exe
           test -f prebuilt-agents/windows/swm-center.exe
-          ls -lh prebuilt-agents/windows/
+          test -f prebuilt-agents/linux/swm-agent
+          test -f prebuilt-agents/linux/swm-center
+          ls -lh prebuilt-agents/windows/ prebuilt-agents/linux/
 
       - name: Log in to GitHub Container Registry (GHCR) on push
         if: github.event_name == 'push'

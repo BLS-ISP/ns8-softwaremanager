@@ -3,6 +3,12 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.4] - 2026-11-23
+
+### Fixed
+- **NS8 `agent.ldapproxy` Integration (`imageroot/`):** Replaced non-existent `LdapDiscovery` imports with NS8's official `from agent.ldapproxy import Ldapproxy` across `get-configuration`, `configure-module`, `restore-module`, and `clone-module`, properly resolving string domain lists from `Ldapproxy().get_domains_list()` via `get_domain(name)` and mapping local `127.0.0.1` `ldapproxy` endpoints to `10.0.2.2` with plaintext LDAP (`LDAP_TLS="false"`).
+- **NS8 OpenLDAP (`rfc2307`) Login & Service Lifecycle (`server/`, `imageroot/`):** Added anonymous subtree DN lookup for OpenLDAP user domains without a dedicated bind DN, prevented redundant double-restarts on initial `configure-module`, guarded Restic `module-dump-state` when `swm-db.service` is unconfigured, and staged prebuilt Linux binaries into `Containerfile.app` in CI.
+
 ## [1.0.3] - 2026-11-23
 
 ### Fixed

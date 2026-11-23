@@ -4,12 +4,23 @@ import os
 import subprocess
 import agent
 
-postgres_image = os.environ.get(
-    "POSTGRES_IMAGE", "docker.io/library/postgres:16-alpine"
+agent_env = {}
+if os.path.exists("agent.env"):
+    try:
+        agent_env = agent.read_envfile("agent.env")
+    except Exception:
+        agent_env = {}
+
+postgres_image = (
+    agent_env.get("POSTGRES_IMAGE")
+    or os.environ.get("POSTGRES_IMAGE", "docker.io/library/postgres:16-alpine")
 )
-swm_app_image = os.environ.get(
-    "SOFTWAREMANAGER_APP_IMAGE",
-    os.environ.get("SWM_APP_IMAGE", "ghcr.io/bls-isp/softwaremanager-app:latest"),
+swm_app_image = (
+    agent_env.get("SOFTWAREMANAGER_APP_IMAGE")
+    or os.environ.get(
+        "SOFTWAREMANAGER_APP_IMAGE",
+        os.environ.get("SWM_APP_IMAGE", "ghcr.io/bls-isp/softwaremanager-app:latest"),
+    )
 )
 
 agent.set_env("POSTGRES_IMAGE", postgres_image)

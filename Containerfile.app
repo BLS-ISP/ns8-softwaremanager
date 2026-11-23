@@ -23,13 +23,20 @@ FROM docker.io/library/rust:1-bookworm AS agent-builder
 
 WORKDIR /src/agent
 COPY agent/ ./
+COPY prebuilt-agents/linux/ /prebuilt-linux/
 RUN rm -rf /src/agent/crates/swm-center/ui/dist
 COPY --from=web-builder /center-ui/dist /src/agent/crates/swm-center/ui/dist
 
-RUN cargo build --release --workspace && \
-    mkdir -p /out/linux /out/linux-amd64 /out/windows && \
-    cp target/release/swm-agent target/release/swm-center /out/linux/ && \
-    cp target/release/swm-agent target/release/swm-center /out/linux-amd64/ && \
+RUN mkdir -p /out/linux /out/linux-amd64 /out/windows && \
+    if [ -f /prebuilt-linux/swm-agent ] && [ -f /prebuilt-linux/swm-center ]; then \
+        cp /prebuilt-linux/swm-agent /prebuilt-linux/swm-center /out/linux/ && \
+        cp /prebuilt-linux/swm-agent /prebuilt-linux/swm-center /out/linux-amd64/ && \
+        chmod 0755 /out/linux/swm-agent /out/linux/swm-center /out/linux-amd64/swm-agent /out/linux-amd64/swm-center; \
+    else \
+        cargo build --release --workspace && \
+        cp target/release/swm-agent target/release/swm-center /out/linux/ && \
+        cp target/release/swm-agent target/release/swm-center /out/linux-amd64/; \
+    fi && \
     cp -r /src/agent/crates/swm-center/ui/dist /out/linux/swm-center-ui && \
     cp -r /src/agent/crates/swm-center/ui/dist /out/linux-amd64/swm-center-ui
 

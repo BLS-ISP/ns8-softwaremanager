@@ -3,26 +3,48 @@
 import json
 import os
 import sys
-from agent.ldapproxy import LdapDiscovery
+import agent
+from agent.ldapproxy import Ldapproxy
 
-domain_name = os.environ.get("DOMAIN_NAME", "")
-lets_encrypt = os.environ.get("LETS_ENCRYPT", "false").lower() == "true"
-http2https = os.environ.get("HTTP2HTTPS", "true").lower() == "true"
-ldap_domain = os.environ.get("LDAP_DOMAIN", "")
-admin_username = os.environ.get("ADMIN_USERNAME", "admin")
-app_url = os.environ.get("APP_URL", f"https://{domain_name}" if domain_name else "")
-tcp_port = int(os.environ.get("TCP_PORT", "20080"))
+env = dict(os.environ)
+if os.path.exists("environment"):
+    try:
+        env.update(agent.read_envfile("environment"))
+    except Exception as ex:
+        print(agent.SD_WARNING + f"Failed reading environment file: {ex}", file=sys.stderr)
+
+domain_name = env.get("DOMAIN_NAME", "")
+lets_encrypt = env.get("LETS_ENCRYPT", "false").lower() == "true"
+http2https = env.get("HTTP2HTTPS", "true").lower() == "true"
+ldap_domain = env.get("LDAP_DOMAIN", "")
+admin_username = env.get("ADMIN_USERNAME", "admin")
+app_url = env.get("APP_URL", f"https://{domain_name}" if domain_name else "")
+
+tcp_ports = [p.strip() for p in env.get("TCP_PORTS", "").split(",") if p.strip()]
+tcp_port_raw = env.get("TCP_PORT") or (tcp_ports[0] if tcp_ports else "20080")
+try:
+    tcp_port = int(str(tcp_port_raw).strip())
+except ValueError:
+    tcp_port = 20080
 
 user_domains = []
 try:
-    for item in LdapDiscovery().get_domains_list():
-        user_domains.append(
-            {
-                "name": str(item.get("name", "")),
-                "schema": str(item.get("schema", "")),
-            }
-        )
-except Exception:
+    lp = Ldapproxy()
+    for item in lp.get_domains_list():
+        if isinstance(item, dict):
+            d_name = str(item.get("name", "")).strip()
+            d_schema = str(item.get("schema", "")).strip()
+        else:
+            d_name = str(item).strip()
+            try:
+                d_info = lp.get_domain(d_name) or {}
+                d_schema = str(d_info.get("schema", "")).strip()
+            except Exception:
+                d_schema = ""
+        if d_name:
+            user_domains.append({"name": d_name, "schema": d_schema})
+except Exception as ex:
+    print(agent.SD_WARNING + f"Failed listing user domains from Ldapproxy: {ex}", file=sys.stderr)
     user_domains = []
 
 config = {

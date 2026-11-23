@@ -1,7 +1,12 @@
 #!/bin/bash
 
 set -euo pipefail
+exec 1>&2
 
 systemctl --user daemon-reload
-systemctl --user enable --now swm.service swm-db.service swm-app.service
-systemctl --user restart swm-app.service
+if systemctl --user -q is-active swm-app.service; then
+    systemctl --user enable swm.service swm-db.service swm-app.service
+    systemctl --user restart swm-app.service
+else
+    systemctl --user enable --now swm.service swm-db.service swm-app.service
+fi

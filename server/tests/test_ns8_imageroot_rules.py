@@ -116,3 +116,136 @@ def test_ns8_rule_8_lf_line_endings_and_containerfile_sanitization() -> None:
     # a FROM scratch module image MUST define ENTRYPOINT or CMD (e.g. ENTRYPOINT ["/"]) to avoid exit 125!
     scratch_stage = cfile_txt.split("FROM scratch", 1)[1]
     assert 'ENTRYPOINT ["/"]' in scratch_stage or 'CMD ["/"]' in scratch_stage
+
+
+def test_ns8_rule_9_ldapproxy_contract_and_mock_action_execution(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Rule 9: Never import non-existent LdapDiscovery; execute NS8 actions against mock agent & Ldapproxy."""
+    import io
+    import os
+    import runpy
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    for p in IMAGEROOT_DIR.rglob("*"):
+        if p.is_file():
+            txt = p.read_text(encoding="utf-8", errors="replace")
+            assert "LdapDiscovery" not in txt, f"Invalid LdapDiscovery reference in {p}"
+
+    state_env: dict[str, str] = {}
+    env_file = tmp_path / "environment"
+
+    fake_agent = ModuleType("agent")
+    fake_agent.SD_WARNING = "<4>"  # type: ignore[attr-defined]
+    fake_agent.set_env = lambda k, v: state_env.__setitem__(str(k), str(v))  # type: ignore[attr-defined]
+    fake_agent.dump_env = lambda: env_file.write_text(  # type: ignore[attr-defined]
+        "\n".join(f"{k}={v}" for k, v in state_env.items()) + "\n",
+        encoding="utf-8",
+    )
+    fake_agent.read_envfile = lambda p: dict(  # type: ignore[attr-defined]
+        line.split("=", 1)
+        for line in Path(p).read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    fake_agent.resolve_agent_id = lambda name: "traefik1"  # type: ignore[attr-defined]
+    fake_agent.assert_exp = lambda cond: (_ for _ in ()).throw(AssertionError()) if not cond else None  # type: ignore[attr-defined]
+    fake_agent.http_route_in_use = lambda domain: False  # type: ignore[attr-defined]
+    fake_agent.tasks = SimpleNamespace(  # type: ignore[attr-defined]
+        run=lambda **_kw: {"exit_code": 0, "output": {}}
+    )
+
+    fake_ldapproxy_mod = ModuleType("agent.ldapproxy")
+
+    class FakeLdapproxy:
+        def get_domains_list(self) -> list[str]:
+            # Real NS8 Ldapproxy.get_domains_list() returns list[str] of domain names!
+            return ["ad.bls-isp.net", "ldap.bls-isp.net"]
+
+        def get_domain(self, name: str) -> dict[str, object]:
+            if name == "ad.bls-isp.net":
+                return {
+                    "host": "127.0.0.1",
+                    "port": 20015,
+                    "schema": "ad",
+                    "base_dn": "dc=ad,dc=bls-isp,dc=net",
+                    "bind_dn": "cn=svc,dc=ad,dc=bls-isp,dc=net",
+                    "bind_password": "secret",
+                    "tls": True,
+                }
+            return {
+                "host": "127.0.0.1",
+                "port": 20016,
+                "schema": "rfc2307",
+                "base_dn": "dc=directory,dc=nh",
+                "bind_dn": "",
+                "bind_password": "",
+                "tls": False,
+            }
+
+    fake_ldapproxy_mod.Ldapproxy = FakeLdapproxy  # type: ignore[attr-defined]
+    fake_agent.ldapproxy = fake_ldapproxy_mod  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "agent", fake_agent)
+    monkeypatch.setitem(sys.modules, "agent.ldapproxy", fake_ldapproxy_mod)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MODULE_ID", "softwaremanager2")
+    monkeypatch.setenv("TCP_PORTS", "20084")
+    monkeypatch.delenv("TCP_PORT", raising=False)
+
+    # 1. Execute create-module/20initialize
+    out_init = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out_init)
+    runpy.run_path(str(IMAGEROOT_DIR / "actions" / "create-module" / "20initialize"))
+    assert json.loads(out_init.getvalue()) == {"tcp_port": 20084}
+    assert state_env["TCP_PORT"] == "20084"
+
+    # 2. Execute get-configuration/20read on unconfigured instance
+    out_read1 = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out_read1)
+    runpy.run_path(str(IMAGEROOT_DIR / "actions" / "get-configuration" / "20read"))
+    cfg1 = json.loads(out_read1.getvalue())
+    assert cfg1["configured"] is False
+    assert cfg1["tcp_port"] == 20084
+    assert cfg1["user_domains"] == [
+        {"name": "ad.bls-isp.net", "schema": "ad"},
+        {"name": "ldap.bls-isp.net", "schema": "rfc2307"},
+    ]
+
+    # 3. Execute configure-module/20configure with NS8 AD user domain
+    for k, v in state_env.items():
+        monkeypatch.setenv(k, v)
+    in_cfg = io.StringIO(
+        json.dumps(
+            {
+                "domain_name": "swm.bls-isp.net",
+                "lets_encrypt": True,
+                "http2https": True,
+                "ldap_domain": "ad.bls-isp.net",
+                "admin_username": "admin",
+                "admin_password": "NewStrongPassword123!",
+            }
+        )
+    )
+    out_cfg = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", in_cfg)
+    monkeypatch.setattr(sys, "stdout", out_cfg)
+    runpy.run_path(str(IMAGEROOT_DIR / "actions" / "configure-module" / "20configure"))
+    assert json.loads(out_cfg.getvalue()) == {"app_url": "https://swm.bls-isp.net"}
+    # Local 127.0.0.1 ldapproxy MUST map to 10.0.2.2 inside slirp4netns pod with plaintext LDAP
+    assert state_env["LDAP_HOST"] == "10.0.2.2"
+    assert state_env["LDAP_PORT"] == "20015"
+    assert state_env["LDAP_TLS"] == "false"
+    assert state_env["LDAP_SCHEMA"] == "ad"
+
+    # 4. Re-read configuration after configure-module
+    for k, v in state_env.items():
+        monkeypatch.setenv(k, v)
+    out_read2 = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out_read2)
+    runpy.run_path(str(IMAGEROOT_DIR / "actions" / "get-configuration" / "20read"))
+    cfg2 = json.loads(out_read2.getvalue())
+    assert cfg2["configured"] is True
+    assert cfg2["domain_name"] == "swm.bls-isp.net"
+    assert cfg2["ldap_domain"] == "ad.bls-isp.net"
+    assert os.path.isfile(env_file)

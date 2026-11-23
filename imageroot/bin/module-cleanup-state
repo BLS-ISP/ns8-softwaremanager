@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+exec 1>&2
 
 # Clean up temporary SQL dump file after Restic backup completes
-rm -f state/database.sql
+rm -f "${AGENT_STATE_DIR:-state}/database.sql" state/database.sql database.sql

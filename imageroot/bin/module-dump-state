@@ -1,8 +1,14 @@
 #!/bin/bash
 
 set -euo pipefail
+exec 1>&2
 
-mkdir -p state
-
-# Dump PostgreSQL database from running swm-db container for Restic backup
-podman exec swm-db pg_dump -U swm swm > state/database.sql
+# Dump PostgreSQL database into state/database.sql when swm-db is running
+if systemctl --user -q is-active swm-db.service; then
+    if [ -n "${AGENT_STATE_DIR:-}" ]; then
+        podman exec swm-db pg_dump -U swm swm > "${AGENT_STATE_DIR}/database.sql"
+    else
+        mkdir -p state
+        podman exec swm-db pg_dump -U swm swm > state/database.sql
+    fi
+fi
