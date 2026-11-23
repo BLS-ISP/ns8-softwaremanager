@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
-use swm_common::{CenterStatusSnapshot, RebootPolicy, RebootState};
+use swm_common::{CenterStatusSnapshot, DesktopPolicy, RebootPolicy, RebootState};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub const POWERSHELL_TOAST_APP_ID: &str =
@@ -8,6 +9,7 @@ pub const POWERSHELL_TOAST_APP_ID: &str =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayMenuAction {
     OpenSoftwareCenter,
+    SyncNow,
     CheckForUpdates,
     ShowStatus,
     SnoozeRebootMinutes(u32),
@@ -28,6 +30,7 @@ pub struct TrayStateTracker {
     last_notified_reboot: bool,
     last_final_warning_sent: bool,
     last_seen_job_id: Option<String>,
+    seen_message_ids: HashSet<String>,
 }
 
 impl TrayStateTracker {
@@ -37,6 +40,7 @@ impl TrayStateTracker {
             last_notified_reboot: false,
             last_final_warning_sent: false,
             last_seen_job_id: None,
+            seen_message_ids: HashSet::new(),
         }
     }
 
@@ -59,9 +63,18 @@ impl TrayStateTracker {
                 .unwrap_or(true)
     }
 
-    pub fn available_menu_items(reboot_state: &RebootState, now_unix: i64) -> Vec<TrayMenuAction> {
+    pub fn is_quit_allowed(policy: &DesktopPolicy) -> bool {
+        !policy.enforce_tray
+    }
+
+    pub fn available_menu_items(
+        reboot_state: &RebootState,
+        policy: &DesktopPolicy,
+        now_unix: i64,
+    ) -> Vec<TrayMenuAction> {
         let mut items = vec![
             TrayMenuAction::OpenSoftwareCenter,
+            TrayMenuAction::SyncNow,
             TrayMenuAction::CheckForUpdates,
             TrayMenuAction::ShowStatus,
         ];
@@ -72,32 +85,51 @@ impl TrayStateTracker {
             }
             items.push(TrayMenuAction::RebootNow);
         }
-        items.push(TrayMenuAction::QuitTray);
+        if !policy.enforce_tray {
+            items.push(TrayMenuAction::QuitTray);
+        }
         items
     }
 
     /// Evaluates an incoming `CenterStatusSnapshot` and returns any desktop notification
-    /// that should be surfaced to the logged-in user (respecting active snooze timers).
+    /// that should be surfaced to the logged-in user (respecting active snooze timers & `silent_notifications`).
     pub fn evaluate_notifications(
         &mut self,
         status: &CenterStatusSnapshot,
         now_unix: i64,
     ) -> Vec<DesktopNotification> {
         let mut notes = Vec::new();
+        let silent = status.desktop_policy.silent_notifications;
 
-        // 1. Notify on newly started mandatory background jobs
-        if let Some(active) = status.active_jobs.first() {
-            if self.last_seen_job_id.as_deref() != Some(active.job_id.as_str()) {
-                self.last_seen_job_id = Some(active.job_id.clone());
+        // 1. Always surface newly received administrator desktop messages immediately
+        for msg in status.admin_messages.iter().rev() {
+            if self.seen_message_ids.insert(msg.id.clone()) {
                 notes.push(DesktopNotification {
-                    title: "Software Center – Installation aktiv".to_string(),
-                    body: format!("{} ({}) wird installiert…", active.target_name, active.version),
-                    urgent: false,
+                    title: msg.title.clone(),
+                    body: msg.message.clone(),
+                    urgent: msg.urgent,
                 });
             }
         }
 
-        // 2. Notify on pending reboot & final countdown (< 15 min before deadline)
+        // 2. Notify on newly started mandatory background jobs (unless silent_notifications is active)
+        if let Some(active) = status.active_jobs.first() {
+            if self.last_seen_job_id.as_deref() != Some(active.job_id.as_str()) {
+                self.last_seen_job_id = Some(active.job_id.clone());
+                if !silent {
+                    notes.push(DesktopNotification {
+                        title: "Software Center – Installation aktiv".to_string(),
+                        body: format!(
+                            "{} ({}) wird installiert…",
+                            active.target_name, active.version
+                        ),
+                        urgent: false,
+                    });
+                }
+            }
+        }
+
+        // 3. Notify on pending reboot & final countdown (< 15 min before deadline)
         let rb = &status.reboot_state;
         if !rb.reboot_required {
             self.last_notified_reboot = false;
@@ -128,12 +160,14 @@ impl TrayStateTracker {
 
         if !is_snoozed && !self.last_notified_reboot {
             self.last_notified_reboot = true;
-            notes.push(DesktopNotification {
-                title: "Neustart erforderlich".to_string(),
-                body: "Ein installiertes Update erfordert einen Neustart Ihres Computers."
-                    .to_string(),
-                urgent: false,
-            });
+            if !silent {
+                notes.push(DesktopNotification {
+                    title: "Neustart erforderlich".to_string(),
+                    body: "Ein installiertes Update erfordert einen Neustart Ihres Computers."
+                        .to_string(),
+                    urgent: false,
+                });
+            }
         }
 
         notes
@@ -485,12 +519,14 @@ mod win32_tray {
     const IDM_SNOOZE_4H: usize = 1004;
     const IDM_REBOOT_NOW: usize = 1005;
     const IDM_QUIT: usize = 1006;
+    const IDM_SYNC_NOW: usize = 1007;
 
     struct Win32TrayThreadState {
         nid: NOTIFYICONDATAW,
         hicon: HICON,
         center_url: String,
         shared_reboot: Arc<RwLock<RebootState>>,
+        shared_policy: Arc<RwLock<DesktopPolicy>>,
         action_tx: UnboundedSender<TrayMenuAction>,
         balloon_queue: Arc<Mutex<VecDeque<DesktopNotification>>>,
         icon_added: bool,
@@ -573,7 +609,14 @@ mod win32_tray {
             return;
         }
 
+        let policy = st
+            .shared_policy
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
         let open_lbl = to_wide_null("Software Center öffnen");
+        let sync_lbl = to_wide_null("Mit Server synchronisieren");
         let updates_lbl = to_wide_null("Nach Updates suchen");
         let snooze1_lbl = to_wide_null("Neustart um 1 Std. verschieben");
         let snooze4_lbl = to_wide_null("Neustart um 4 Std. verschieben");
@@ -581,7 +624,13 @@ mod win32_tray {
         let quit_lbl = to_wide_null("Beenden");
 
         AppendMenuW(hmenu, MF_STRING, IDM_OPEN_CENTER, open_lbl.as_ptr());
-        AppendMenuW(hmenu, MF_STRING, IDM_CHECK_UPDATES, updates_lbl.as_ptr());
+        AppendMenuW(hmenu, MF_STRING, IDM_SYNC_NOW, sync_lbl.as_ptr());
+        let update_flags = if policy.allow_user_os_updates {
+            MF_STRING
+        } else {
+            MF_STRING | MF_GRAYED
+        };
+        AppendMenuW(hmenu, update_flags, IDM_CHECK_UPDATES, updates_lbl.as_ptr());
         AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
         let rb = st
@@ -604,8 +653,10 @@ mod win32_tray {
             AppendMenuW(hmenu, MF_STRING, IDM_REBOOT_NOW, reboot_lbl.as_ptr());
         }
 
-        AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
-        AppendMenuW(hmenu, MF_STRING, IDM_QUIT, quit_lbl.as_ptr());
+        if !policy.enforce_tray {
+            AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
+            AppendMenuW(hmenu, MF_STRING, IDM_QUIT, quit_lbl.as_ptr());
+        }
 
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
@@ -626,6 +677,9 @@ mod win32_tray {
 
         match selected {
             IDM_OPEN_CENTER => launch_desktop_window(&st.center_url),
+            IDM_SYNC_NOW => {
+                let _ = st.action_tx.send(TrayMenuAction::SyncNow);
+            }
             IDM_CHECK_UPDATES => {
                 let _ = st.action_tx.send(TrayMenuAction::CheckForUpdates);
             }
@@ -639,8 +693,10 @@ mod win32_tray {
                 let _ = st.action_tx.send(TrayMenuAction::RebootNow);
             }
             IDM_QUIT => {
-                let _ = st.action_tx.send(TrayMenuAction::QuitTray);
-                DestroyWindow(hwnd);
+                if !policy.enforce_tray {
+                    let _ = st.action_tx.send(TrayMenuAction::QuitTray);
+                    DestroyWindow(hwnd);
+                }
             }
             _ => {}
         }
@@ -727,6 +783,7 @@ mod win32_tray {
         pub fn spawn(
             center_url: String,
             shared_reboot: Arc<RwLock<RebootState>>,
+            shared_policy: Arc<RwLock<DesktopPolicy>>,
             action_tx: UnboundedSender<TrayMenuAction>,
         ) -> Option<Self> {
             let balloon_queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -791,6 +848,7 @@ mod win32_tray {
                             hicon,
                             center_url,
                             shared_reboot,
+                            shared_policy,
                             action_tx,
                             balloon_queue: queue_for_thread,
                             icon_added,
@@ -850,6 +908,7 @@ impl NativeTrayHandle {
     pub fn spawn(
         _center_url: String,
         _shared_reboot: Arc<RwLock<RebootState>>,
+        _shared_policy: Arc<RwLock<DesktopPolicy>>,
         _action_tx: UnboundedSender<TrayMenuAction>,
     ) -> Option<Self> {
         None
@@ -863,7 +922,7 @@ impl NativeTrayHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use swm_common::RebootState;
+    use swm_common::{AdminDesktopMessage, DesktopPolicy, JobActivityEntry, RebootState};
 
     #[test]
     fn test_tray_minimize_and_reboot_countdown_notifications() {
@@ -873,6 +932,7 @@ mod tests {
 
         let snap = CenterStatusSnapshot {
             device_id: "dev-1".to_string(),
+            hostname: "wks-01".to_string(),
             server_url: "https://swm.local".to_string(),
             agent_version: "1.0.0".to_string(),
             connected: true,
@@ -889,6 +949,8 @@ mod tests {
                 snoozed_until_unix: None,
                 triggered_by_job_id: Some("job-1".to_string()),
             },
+            desktop_policy: DesktopPolicy::default(),
+            admin_messages: vec![],
         };
 
         // Initial reboot notification fires once
@@ -902,12 +964,81 @@ mod tests {
         assert_eq!(n_urgent.len(), 1);
         assert!(n_urgent[0].urgent);
 
-        // Menu hides Snooze options once deadline has passed
-        let menu_before = TrayStateTracker::available_menu_items(&snap.reboot_state, 5000);
+        // Menu hides Snooze options once deadline has passed, includes SyncNow, and omits QuitTray when enforce_tray=true
+        let menu_before =
+            TrayStateTracker::available_menu_items(&snap.reboot_state, &snap.desktop_policy, 5000);
+        assert!(menu_before.contains(&TrayMenuAction::SyncNow));
         assert!(menu_before.contains(&TrayMenuAction::SnoozeRebootMinutes(60)));
-        let menu_after = TrayStateTracker::available_menu_items(&snap.reboot_state, 15_400);
+        assert!(!menu_before.contains(&TrayMenuAction::QuitTray));
+
+        let mut relaxed_policy = DesktopPolicy::default();
+        relaxed_policy.enforce_tray = false;
+        let menu_after =
+            TrayStateTracker::available_menu_items(&snap.reboot_state, &relaxed_policy, 15_400);
         assert!(!menu_after.contains(&TrayMenuAction::SnoozeRebootMinutes(60)));
         assert!(menu_after.contains(&TrayMenuAction::RebootNow));
+        assert!(menu_after.contains(&TrayMenuAction::QuitTray));
+    }
+
+    #[test]
+    fn test_tray_silent_mode_and_admin_message_toast_deduplication() {
+        let mut tracker = TrayStateTracker::new(true);
+        let mut policy = DesktopPolicy::default();
+        policy.silent_notifications = true;
+
+        let snap = CenterStatusSnapshot {
+            device_id: "dev-2".to_string(),
+            hostname: "kiosk-02".to_string(),
+            server_url: "https://swm.local".to_string(),
+            agent_version: "1.0.0".to_string(),
+            connected: true,
+            device_status: "approved".to_string(),
+            pending_os_updates: vec![],
+            active_jobs: vec![JobActivityEntry {
+                job_id: "job-bg-1".to_string(),
+                job_type: "software".to_string(),
+                action: "install".to_string(),
+                target_name: "7-Zip".to_string(),
+                version: "24.08".to_string(),
+                status: "running".to_string(),
+                exit_code: None,
+                reboot_required: false,
+                timestamp: "2026-11-23T18:00:00Z".to_string(),
+                message: "Installing".to_string(),
+            }],
+            recent_history: vec![],
+            reboot_state: RebootState {
+                reboot_required: true,
+                policy: RebootPolicy::GracePeriod,
+                grace_period_minutes: 60,
+                detected_at_unix: Some(1000),
+                deadline_unix: Some(4600),
+                snoozed_until_unix: None,
+                triggered_by_job_id: Some("job-bg-1".to_string()),
+            },
+            desktop_policy: policy,
+            admin_messages: vec![AdminDesktopMessage {
+                id: "adm-1".to_string(),
+                title: "IT-Wartung".to_string(),
+                message: "VPN wird um 20:00 Uhr neu gestartet.".to_string(),
+                urgent: false,
+                created_at: "2026-11-23T18:00:00Z".to_string(),
+            }],
+        };
+
+        // Silent mode suppresses non-urgent active_job + initial reboot, but ALWAYS lets admin_messages through!
+        let first_notes = tracker.evaluate_notifications(&snap, 1200);
+        assert_eq!(first_notes.len(), 1);
+        assert_eq!(first_notes[0].title, "IT-Wartung");
+        assert_eq!(first_notes[0].body, "VPN wird um 20:00 Uhr neu gestartet.");
+
+        // Subsequent poll does not repeat already-seen admin_message
+        assert!(tracker.evaluate_notifications(&snap, 1300).is_empty());
+
+        // Urgent <15m reboot warning still passes through silent_notifications!
+        let urgent_notes = tracker.evaluate_notifications(&snap, 4000);
+        assert_eq!(urgent_notes.len(), 1);
+        assert!(urgent_notes[0].urgent);
     }
 
     #[test]

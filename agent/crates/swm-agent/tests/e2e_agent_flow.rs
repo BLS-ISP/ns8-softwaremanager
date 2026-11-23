@@ -60,6 +60,7 @@ async fn handle_status(State(st): State<MockServerState>) -> Json<AgentStatusRes
         in_maintenance_window: true,
         excluded_updates: vec!["KB5034441".to_string()],
         server_public_key_b64: Some(guard.kp.public_key_b64()),
+        desktop_policy: Default::default(),
     })
 }
 

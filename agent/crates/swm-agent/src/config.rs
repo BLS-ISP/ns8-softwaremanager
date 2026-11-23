@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use swm_common::{
-    JobActivityEntry, PendingOsUpdate, RebootState, SignedCatalogItem, SoftwareEntry,
+    AdminDesktopMessage, DesktopPolicy, JobActivityEntry, PendingOsUpdate, RebootState,
+    SignedCatalogItem, SoftwareEntry,
 };
 
 pub const DEFAULT_WINDOWS_DATA_DIR: &str = r"C:\ProgramData\NS8-SoftwareManager";
@@ -73,6 +74,10 @@ pub struct AgentRuntimeState {
     pub pending_os_updates_cache: Vec<PendingOsUpdate>,
     #[serde(default)]
     pub recent_history: Vec<JobActivityEntry>,
+    #[serde(default)]
+    pub desktop_policy: DesktopPolicy,
+    #[serde(default)]
+    pub admin_messages: Vec<AdminDesktopMessage>,
 }
 
 impl AgentRuntimeState {

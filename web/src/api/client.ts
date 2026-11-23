@@ -1,6 +1,8 @@
 import type {
   AdminUser,
   AgentArtifactsResponse,
+  BulkDeviceActionPayload,
+  BulkDeviceActionResponse,
   CatalogCreatePayload,
   CatalogItem,
   ChunkUploadResponse,
@@ -10,6 +12,8 @@ import type {
   Device,
   DeviceFilters,
   DeviceGroup,
+  DeviceNotifyPayload,
+  DeviceRebootPayload,
   DeviceUpdatePayload,
   EnrollmentToken,
   EnrollmentTokenCreatePayload,
@@ -256,6 +260,33 @@ export const adminApi = {
   scanDeviceUpdates(id: string): Promise<JobItem> {
     return apiRequest<JobItem>(`/api/v1/admin/devices/${encodeURIComponent(id)}/scan-updates`, {
       method: 'POST',
+    })
+  },
+
+  syncDevice(id: string): Promise<JobItem> {
+    return apiRequest<JobItem>(`/api/v1/admin/devices/${encodeURIComponent(id)}/sync`, {
+      method: 'POST',
+    })
+  },
+
+  notifyDevice(id: string, payload: DeviceNotifyPayload): Promise<JobItem> {
+    return apiRequest<JobItem>(`/api/v1/admin/devices/${encodeURIComponent(id)}/notify`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  rebootDevice(id: string, payload: DeviceRebootPayload): Promise<JobItem> {
+    return apiRequest<JobItem>(`/api/v1/admin/devices/${encodeURIComponent(id)}/reboot`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  bulkDeviceAction(payload: BulkDeviceActionPayload): Promise<BulkDeviceActionResponse> {
+    return apiRequest<BulkDeviceActionResponse>('/api/v1/admin/devices/bulk-action', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     })
   },
 

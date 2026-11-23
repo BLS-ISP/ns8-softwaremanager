@@ -269,4 +269,193 @@ describe('NS8 Software Center UI', () => {
     wrapper.unmount();
     vi.unstubAllGlobals();
   });
+
+  it('enforces IT managed-mode banners and disables self-service & OS update buttons when disallowed', () => {
+    const storeManaged = mount(StoreView, {
+      props: { items: sampleCatalog, busyId: null, allowSelfService: false },
+    });
+    expect(storeManaged.find('[data-testid="self-service-policy-banner"]').exists()).toBe(true);
+    expect(storeManaged.text()).toContain(
+      'Durch IT-Richtlinie verwalteter Modus — Installationen werden zentral gesteuert'
+    );
+    expect(
+      (storeManaged.find('[data-testid="install-btn-pkg-7zip"]').element as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+    expect(
+      (storeManaged.find('[data-testid="uninstall-btn-pkg-firefox"]').element as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+
+    const updatesManaged = mount(UpdatesView, {
+      props: {
+        osUpdates: [
+          {
+            update_id: 'KB5044285',
+            title: 'Kumulatives Sicherheitsupdate',
+            severity: 'critical',
+            category: 'security',
+            size_bytes: 102400,
+            reboot_behavior: 'always_requires_reboot',
+          },
+        ],
+        appUpdates: [],
+        busy: false,
+        allowUserOsUpdates: false,
+      },
+    });
+    expect(updatesManaged.find('[data-testid="os-updates-policy-banner"]').exists()).toBe(true);
+    expect(
+      (updatesManaged.find('[data-testid="install-all-updates-btn"]').element as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+  });
+
+  it('renders dismissible admin message banners and System & Diagnose tab with sync and clipboard copy', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextMock },
+      configurable: true,
+    });
+
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === '/api/center/catalog') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, data: { kind: 'catalog', items: sampleCatalog } }),
+        };
+      }
+      if (url === '/api/messages/dismiss') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              device_id: 'dev-wks-07',
+              hostname: 'WKS-BUCHHALTUNG-07',
+              server_url: 'https://swm.ns8.example',
+              agent_version: '1.0.0',
+              connected: true,
+              device_status: 'approved',
+              pending_os_updates: [],
+              active_jobs: [],
+              recent_history: [],
+              reboot_state: {
+                reboot_required: false,
+                policy: 'grace_period',
+                grace_period_minutes: 120,
+                detected_at_unix: null,
+                deadline_unix: null,
+                snoozed_until_unix: null,
+                triggered_by_job_id: null,
+              },
+              desktop_policy: {
+                enforce_tray: true,
+                allow_self_service: false,
+                allow_user_os_updates: true,
+                silent_notifications: false,
+              },
+              admin_messages: [],
+            },
+          }),
+        };
+      }
+      if (url === '/api/sync') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              job_id: 'sync-now',
+              status: 'running',
+              message: 'Synchronisation mit NS8-Server gestartet.',
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          data: {
+            device_id: 'dev-wks-07',
+            hostname: 'WKS-BUCHHALTUNG-07',
+            server_url: 'https://swm.ns8.example',
+            agent_version: '1.0.0',
+            connected: true,
+            device_status: 'approved',
+            pending_os_updates: [],
+            active_jobs: [],
+            recent_history: [],
+            reboot_state: {
+              reboot_required: false,
+              policy: 'grace_period',
+              grace_period_minutes: 120,
+              detected_at_unix: null,
+              deadline_unix: null,
+              snoozed_until_unix: null,
+              triggered_by_job_id: null,
+            },
+            desktop_policy: {
+              enforce_tray: true,
+              allow_self_service: false,
+              allow_user_os_updates: true,
+              silent_notifications: false,
+            },
+            admin_messages: [
+              {
+                id: 'msg-99',
+                title: 'Geplante Serverwartung',
+                message: 'Bitte speichern Sie alle Dokumente bis 19:00 Uhr.',
+                urgent: true,
+                created_at: '2026-11-23T18:00:00Z',
+              },
+            ],
+          },
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    const wrapper = mount(App);
+    await new Promise((r) => setTimeout(r, 20));
+    await wrapper.vm.$nextTick();
+
+    // 1. Admin message banner is visible and dismissible via POST /api/messages/dismiss
+    const banner = wrapper.find('[data-testid="admin-message-banner"]');
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain('Geplante Serverwartung');
+    await wrapper.find('[data-testid="dismiss-message-msg-99"]').trigger('click');
+    await new Promise((r) => setTimeout(r, 15));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="admin-message-banner"]').exists()).toBe(false);
+
+    // 2. Navigate to 4th tab "System & Diagnose"
+    const navDiag = wrapper.find('[data-testid="nav-diagnostics"]');
+    expect(navDiag.exists()).toBe(true);
+    await navDiag.trigger('click');
+
+    expect(wrapper.find('[data-testid="diag-hostname"]').text()).toBe('WKS-BUCHHALTUNG-07');
+    expect(wrapper.find('[data-testid="diag-device-id"]').text()).toBe('dev-wks-07');
+    expect(wrapper.find('[data-testid="diag-server-url"]').text()).toBe('https://swm.ns8.example');
+    expect(wrapper.find('[data-testid="policy-enforce-tray"]').text()).toContain('Erzwungen');
+    expect(wrapper.find('[data-testid="policy-self-service"]').text()).toContain('Zentral verwaltet');
+
+    // 3. Copy diagnostics report to clipboard
+    await wrapper.find('[data-testid="diagnostics-copy-btn"]').trigger('click');
+    expect(writeTextMock).toHaveBeenCalledTimes(1);
+    expect(writeTextMock.mock.calls[0][0]).toContain('WKS-BUCHHALTUNG-07');
+
+    // 4. Trigger manual server sync via POST /api/sync
+    await wrapper.find('[data-testid="diagnostics-sync-btn"]').trigger('click');
+    await new Promise((r) => setTimeout(r, 15));
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/sync')).toBe(true);
+
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  });
 });

@@ -113,6 +113,23 @@ fn compute_catalog_item_view(
     }
 }
 
+fn build_status_snapshot(guard: &AgentIpcInner) -> CenterStatusSnapshot {
+    CenterStatusSnapshot {
+        device_id: guard.config.device_id.clone(),
+        hostname: crate::inventory::system::detect_hostname(),
+        server_url: guard.config.server_url.clone(),
+        agent_version: AGENT_VERSION.to_string(),
+        connected: guard.ws_connected.load(Ordering::SeqCst),
+        device_status: guard.config.status.clone(),
+        pending_os_updates: guard.state.pending_os_updates_cache.clone(),
+        active_jobs: guard.active_jobs.clone(),
+        recent_history: guard.state.recent_history.clone(),
+        reboot_state: guard.reboot_mgr.state().clone(),
+        desktop_policy: guard.state.desktop_policy.clone(),
+        admin_messages: guard.state.admin_messages.clone(),
+    }
+}
+
 /// Processes a single unprivileged `IpcRequest` under strict Ed25519 privilege separation.
 pub async fn process_ipc_request(ctx: &SharedAgentIpcContext, req: IpcRequest) -> IpcResponse {
     match req {
@@ -143,18 +160,7 @@ pub async fn process_ipc_request(ctx: &SharedAgentIpcContext, req: IpcRequest) -
 
         IpcRequest::GetStatus => {
             let guard = ctx.lock().await;
-            let snap = CenterStatusSnapshot {
-                device_id: guard.config.device_id.clone(),
-                server_url: guard.config.server_url.clone(),
-                agent_version: AGENT_VERSION.to_string(),
-                connected: guard.ws_connected.load(Ordering::SeqCst),
-                device_status: guard.config.status.clone(),
-                pending_os_updates: guard.state.pending_os_updates_cache.clone(),
-                active_jobs: guard.active_jobs.clone(),
-                recent_history: guard.state.recent_history.clone(),
-                reboot_state: guard.reboot_mgr.state().clone(),
-            };
-            IpcResponse::success(IpcResponseData::Status(snap))
+            IpcResponse::success(IpcResponseData::Status(build_status_snapshot(&guard)))
         }
 
         IpcRequest::TriggerPackage { package_id, action } => {
@@ -166,12 +172,19 @@ pub async fn process_ipc_request(ctx: &SharedAgentIpcContext, req: IpcRequest) -
                 );
             }
 
-            // PRIVILEGE SEPARATION GATE:
+            // PRIVILEGE SEPARATION & GROUP POLICY GATE:
+            // 0. `desktop_policy.allow_self_service` MUST be enabled by group policy.
             // 1. `package_id` MUST exist in swm-agent's cached `available_catalog`.
             // 2. Its Ed25519 server signature MUST verify against `server_public_key_b64` and `device_id`.
             // 3. `Uninstall` MUST be permitted by `allow_uninstall == true` in the signed manifest.
             let (api, pkg_name, pkg_ver) = {
                 let mut guard = ctx.lock().await;
+                if !guard.state.desktop_policy.allow_self_service {
+                    return IpcResponse::error(
+                        IpcErrorCode::PermissionDenied,
+                        "Self-Service ist durch eine IT-Richtlinie deaktiviert.",
+                    );
+                }
                 let Some(cat_item) = guard
                     .state
                     .available_catalog
@@ -346,7 +359,16 @@ pub async fn process_ipc_request(ctx: &SharedAgentIpcContext, req: IpcRequest) -
         }
 
         IpcRequest::TriggerPendingUpdates => {
-            let api = { ctx.lock().await.api.clone() };
+            let api = {
+                let guard = ctx.lock().await;
+                if !guard.state.desktop_policy.allow_user_os_updates {
+                    return IpcResponse::error(
+                        IpcErrorCode::PermissionDenied,
+                        "Manuelle OS-Updates sind durch eine IT-Richtlinie deaktiviert.",
+                    );
+                }
+                guard.api.clone()
+            };
             let pending = match api.get_pending_jobs().await {
                 Ok(p) => p,
                 Err(err) => {
@@ -427,6 +449,30 @@ pub async fn process_ipc_request(ctx: &SharedAgentIpcContext, req: IpcRequest) -
                 return IpcResponse::error(IpcErrorCode::InternalError, err.to_string());
             }
             IpcResponse::success(IpcResponseData::RebootUpdated(current_state))
+        }
+
+        IpcRequest::SyncNow => {
+            let bg_ctx = Arc::clone(ctx);
+            tokio::spawn(async move {
+                let reboot_flag = AtomicBool::new(false);
+                if let Err(err) =
+                    crate::daemon::run_sync_cycle(&bg_ctx, false, true, &reboot_flag).await
+                {
+                    tracing::warn!("IPC SyncNow background sync cycle failed: {err}");
+                }
+            });
+            IpcResponse::success(IpcResponseData::ActionTriggered {
+                job_id: "sync-now".to_string(),
+                status: "running".to_string(),
+                message: "Synchronisation mit NS8-Server gestartet.".to_string(),
+            })
+        }
+
+        IpcRequest::DismissMessage { message_id } => {
+            let mut guard = ctx.lock().await;
+            guard.state.admin_messages.retain(|m| m.id != message_id);
+            let _ = guard.state.save(&guard.data_dir);
+            IpcResponse::success(IpcResponseData::Status(build_status_snapshot(&guard)))
         }
     }
 }
@@ -677,6 +723,78 @@ mod tests {
 
         // 6. Non-loopback TCP IPC address is rejected by security check
         assert!(parse_loopback_tcp_addr("0.0.0.0:9999").is_err());
+
+        // 7. Policy Gates: allow_self_service=false & allow_user_os_updates=false -> PermissionDenied
+        {
+            let mut guard = ctx.lock().await;
+            guard.state.desktop_policy.allow_self_service = false;
+            guard.state.desktop_policy.allow_user_os_updates = false;
+            guard.state.admin_messages.push(swm_common::AdminDesktopMessage {
+                id: "msg-test-1".to_string(),
+                title: "Wartung".to_string(),
+                message: "Server-Update um 18:00 Uhr".to_string(),
+                urgent: true,
+                created_at: "2026-11-23T17:00:00Z".to_string(),
+            });
+        }
+
+        let ss_denied = send_ipc_request(
+            &pipe_or_loopback,
+            &IpcRequest::TriggerPackage {
+                package_id: "pkg-allowed".to_string(),
+                action: PackageAction::Install,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!ss_denied.ok);
+        assert_eq!(ss_denied.error_code, Some(IpcErrorCode::PermissionDenied));
+        assert_eq!(
+            ss_denied.message.as_deref(),
+            Some("Self-Service ist durch eine IT-Richtlinie deaktiviert.")
+        );
+
+        let upd_denied = send_ipc_request(&pipe_or_loopback, &IpcRequest::TriggerPendingUpdates)
+            .await
+            .unwrap();
+        assert!(!upd_denied.ok);
+        assert_eq!(upd_denied.error_code, Some(IpcErrorCode::PermissionDenied));
+        assert_eq!(
+            upd_denied.message.as_deref(),
+            Some("Manuelle OS-Updates sind durch eine IT-Richtlinie deaktiviert.")
+        );
+
+        // 8. DismissMessage removes message and returns updated CenterStatusSnapshot
+        let dismiss_resp = send_ipc_request(
+            &pipe_or_loopback,
+            &IpcRequest::DismissMessage {
+                message_id: "msg-test-1".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(dismiss_resp.ok);
+        match dismiss_resp.data.unwrap() {
+            IpcResponseData::Status(st) => {
+                assert!(st.admin_messages.is_empty());
+                assert!(!st.hostname.is_empty());
+                assert!(!st.desktop_policy.allow_self_service);
+            }
+            other => panic!("Unexpected DismissMessage response: {other:?}"),
+        }
+
+        // 9. SyncNow triggers background sync and returns running ActionTriggered
+        let sync_resp = send_ipc_request(&pipe_or_loopback, &IpcRequest::SyncNow)
+            .await
+            .unwrap();
+        assert!(sync_resp.ok);
+        match sync_resp.data.unwrap() {
+            IpcResponseData::ActionTriggered { job_id, status, .. } => {
+                assert_eq!(job_id, "sync-now");
+                assert_eq!(status, "running");
+            }
+            other => panic!("Unexpected SyncNow response: {other:?}"),
+        }
 
         let _ = shut_tx.send(true);
         let _ = srv_handle.await;

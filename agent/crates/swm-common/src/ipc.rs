@@ -1,4 +1,4 @@
-use crate::dto::{PendingOsUpdate, RebootState};
+use crate::dto::{AdminDesktopMessage, DesktopPolicy, PendingOsUpdate, RebootState};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WINDOWS_PIPE: &str = r"\\.\pipe\ns8-swm-ipc";
@@ -48,6 +48,10 @@ pub enum IpcRequest {
         minutes: u32,
     },
     ConfirmRebootNow,
+    SyncNow,
+    DismissMessage {
+        message_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +101,8 @@ pub struct JobActivityEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CenterStatusSnapshot {
     pub device_id: String,
+    #[serde(default)]
+    pub hostname: String,
     pub server_url: String,
     pub agent_version: String,
     pub connected: bool,
@@ -105,6 +111,10 @@ pub struct CenterStatusSnapshot {
     pub active_jobs: Vec<JobActivityEntry>,
     pub recent_history: Vec<JobActivityEntry>,
     pub reboot_state: RebootState,
+    #[serde(default)]
+    pub desktop_policy: DesktopPolicy,
+    #[serde(default)]
+    pub admin_messages: Vec<AdminDesktopMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -173,5 +183,34 @@ mod tests {
     fn test_ipc_rejects_unknown_arbitrary_command_variant() {
         let raw = r#"{"command":"run_shell","cmd":"whoami"}"#;
         assert!(serde_json::from_str::<IpcRequest>(raw).is_err());
+    }
+
+    #[test]
+    fn test_desktop_policy_defaults_and_new_ipc_variants_roundtrip() {
+        let def = DesktopPolicy::default();
+        assert!(def.enforce_tray);
+        assert!(def.allow_self_service);
+        assert!(def.allow_user_os_updates);
+        assert!(!def.silent_notifications);
+
+        let from_empty: DesktopPolicy = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, def);
+
+        let sync_json = serde_json::to_string(&IpcRequest::SyncNow).unwrap();
+        assert!(sync_json.contains("\"command\":\"sync_now\""));
+        assert_eq!(
+            serde_json::from_str::<IpcRequest>(&sync_json).unwrap(),
+            IpcRequest::SyncNow
+        );
+
+        let dismiss_req = IpcRequest::DismissMessage {
+            message_id: "msg-42".to_string(),
+        };
+        let dismiss_json = serde_json::to_string(&dismiss_req).unwrap();
+        assert!(dismiss_json.contains("\"command\":\"dismiss_message\""));
+        assert_eq!(
+            serde_json::from_str::<IpcRequest>(&dismiss_json).unwrap(),
+            dismiss_req
+        );
     }
 }

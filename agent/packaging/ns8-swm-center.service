@@ -1,0 +1,13 @@
+[Unit]
+Description=NS8 Software Center Desktop Tray & Self-Service Agent Bridge
+Documentation=https://github.com/BLS-ISP/ns8-softwaremanager
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/swm-center gui --tray-only
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

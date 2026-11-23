@@ -12,6 +12,18 @@
       </div>
     </div>
 
+    <div
+      v-if="!allowSelfService"
+      class="policy-info-banner"
+      role="status"
+      data-testid="self-service-policy-banner"
+    >
+      <span>
+        <strong>Durch IT-Richtlinie verwalteter Modus — Installationen werden zentral gesteuert.</strong>
+        Manuelle Installationen und Deinstallationen sind für diese Gerätegruppe deaktiviert.
+      </span>
+    </div>
+
     <div class="toolbar">
       <div class="search-box">
         <svg
@@ -164,7 +176,7 @@
               v-if="canInstall(item)"
               type="button"
               class="btn btn-primary"
-              :disabled="busyId === item.package_id"
+              :disabled="!allowSelfService || busyId === item.package_id"
               :data-testid="`install-btn-${item.package_id}`"
               @click="$emit('trigger', item.package_id, 'install')"
             >
@@ -175,7 +187,7 @@
               v-if="item.status === 'update_available'"
               type="button"
               class="btn btn-primary"
-              :disabled="busyId === item.package_id"
+              :disabled="!allowSelfService || busyId === item.package_id"
               :data-testid="`update-btn-${item.package_id}`"
               @click="$emit('trigger', item.package_id, 'update')"
             >
@@ -186,7 +198,7 @@
               v-if="canUninstall(item)"
               type="button"
               class="btn btn-danger"
-              :disabled="busyId === item.package_id"
+              :disabled="!allowSelfService || busyId === item.package_id"
               :data-testid="`uninstall-btn-${item.package_id}`"
               @click="requestUninstall(item)"
             >
@@ -240,10 +252,16 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import type { CatalogViewItem } from '../api';
 
-const props = defineProps<{
-  items: CatalogViewItem[];
-  busyId?: string | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    items: CatalogViewItem[];
+    busyId?: string | null;
+    allowSelfService?: boolean;
+  }>(),
+  {
+    allowSelfService: true,
+  }
+);
 
 const emit = defineEmits<{
   (e: 'trigger', packageId: string, action: 'install' | 'update' | 'uninstall'): void;
@@ -427,6 +445,7 @@ function canUninstall(item: CatalogViewItem): boolean {
 }
 
 function requestUninstall(item: CatalogViewItem) {
+  if (!props.allowSelfService) return;
   pendingUninstallItem.value = item;
 }
 

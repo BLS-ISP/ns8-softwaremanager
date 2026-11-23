@@ -57,16 +57,30 @@ if ($LASTEXITCODE -ne 0) {
     throw "Enrollment failed with exit code $LASTEXITCODE"
 }
 
-$ExistingSvc = Get-Service -Name 'NS8SoftwareManagerAgent' -ErrorAction SilentlyContinue
+$ServiceName = 'NS8SoftwareManagerAgent'
+$ExistingSvc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -eq $ExistingSvc) {
-    Write-Host "[NS8-SWM] Registering NS8SoftwareManagerAgent Windows Service..."
+    Write-Host "[NS8-SWM] Registering $ServiceName Windows Service..."
     & $AgentExe --data-dir $DataDir service-install
 }
+& sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/30000 | Out-Null
+& sc.exe failureflag $ServiceName 1 | Out-Null
 
 $RunKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
 if ($Headless -eq 0) {
     Write-Host "[NS8-SWM] Configuring Software Center System Tray autostart for interactive desktop users..."
     Set-ItemProperty -Path $RunKey -Name 'NS8SoftwareCenter' -Value '"C:\Program Files\NS8-SoftwareManager\swm-center.exe" gui --tray-only'
+
+    try {
+        $GuardianAction = New-ScheduledTaskAction -Execute $CenterExe -Argument 'gui --tray-only' -WorkingDirectory $InstallDir
+        $GuardianTrigger = New-ScheduledTaskTrigger -AtLogOn
+        $GuardianPrincipal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited
+        $GuardianSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+        Register-ScheduledTask -TaskName 'NS8SoftwareCenterGuardian' -Action $GuardianAction -Trigger $GuardianTrigger -Principal $GuardianPrincipal -Settings $GuardianSettings -Force | Out-Null
+        Start-ScheduledTask -TaskName 'NS8SoftwareCenterGuardian' -ErrorAction SilentlyContinue
+    } catch {
+        Write-Warning "Could not register NS8SoftwareCenterGuardian scheduled task: $_"
+    }
 
     $CommonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
     $WshShell = New-Object -ComObject WScript.Shell
@@ -78,8 +92,9 @@ if ($Headless -eq 0) {
     $Shortcut.Save()
 } else {
     Remove-ItemProperty -Path $RunKey -Name 'NS8SoftwareCenter' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'NS8SoftwareCenterGuardian' -Confirm:$false -ErrorAction SilentlyContinue
 }
 
-Write-Host "[NS8-SWM] Starting NS8SoftwareManagerAgent service..."
-Start-Service -Name 'NS8SoftwareManagerAgent'
+Write-Host "[NS8-SWM] Starting $ServiceName service..."
+Start-Service -Name $ServiceName
 Write-Host "[NS8-SWM] Installation complete."

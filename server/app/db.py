@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import event, text
+from sqlalchemy import Connection, event, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -59,6 +59,51 @@ def build_async_engine(database_url: str) -> AsyncEngine:
     )
 
 
+def ensure_schema_upgrades(sync_conn: Connection) -> None:
+    """Idempotently add newly introduced columns on existing SQLite / PostgreSQL databases."""
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    is_sqlite = sync_conn.dialect.name == "sqlite"
+
+    table_upgrades: tuple[tuple[str, tuple[tuple[str, bool], ...]], ...] = (
+        (
+            "groups",
+            (
+                ("enforce_tray", True),
+                ("allow_self_service", True),
+                ("allow_user_os_updates", True),
+                ("silent_notifications", False),
+            ),
+        ),
+        (
+            "devices",
+            (
+                ("center_running", False),
+            ),
+        ),
+    )
+
+    for table_name, columns in table_upgrades:
+        if table_name not in existing_tables:
+            continue
+        present_cols = {col["name"] for col in inspector.get_columns(table_name)}
+        for col_name, default_bool in columns:
+            if col_name in present_cols:
+                continue
+            default_sql = (
+                ("1" if default_bool else "0")
+                if is_sqlite
+                else ("TRUE" if default_bool else "FALSE")
+            )
+            sync_conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    f"ADD COLUMN {col_name} BOOLEAN NOT NULL DEFAULT {default_sql}"
+                )
+            )
+            logger.info("Applied live schema upgrade: %s.%s", table_name, col_name)
+
+
 async def connect_with_backoff(
     engine: AsyncEngine,
     max_retries: int = 8,
@@ -72,6 +117,7 @@ async def connect_with_backoff(
             async with engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(ensure_schema_upgrades)
             if attempt > 0:
                 logger.info("Database connected after %d retry attempts.", attempt)
             return

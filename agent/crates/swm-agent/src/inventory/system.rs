@@ -151,15 +151,72 @@ fn collect_logged_in_users() -> Vec<String> {
     users.into_iter().collect()
 }
 
+pub fn detect_hostname() -> String {
+    System::host_name()
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| "unknown-host".to_string())
+}
+
+/// Fast cross-platform check whether `swm-center(.exe)` is currently running in any user session.
+/// Never fails or panics; returns `false` on any error.
+pub fn detect_swm_center_running() -> bool {
+    if let Ok(mock) = std::env::var("SWM_MOCK_CENTER_RUNNING") {
+        match mock.trim() {
+            "1" | "true" | "TRUE" => return true,
+            "0" | "false" | "FALSE" => return false,
+            _ => {}
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        if let Ok(out) = std::process::Command::new("tasklist.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["/FI", "IMAGENAME eq swm-center.exe", "/NH"])
+            .output()
+        {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                return stdout.to_ascii_lowercase().contains("swm-center.exe");
+            }
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    {
+        if let Ok(out) = std::process::Command::new("pgrep")
+            .args(["-x", "swm-center"])
+            .output()
+        {
+            return out.status.success();
+        }
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if !name_str.is_empty() && name_str.chars().all(|c| c.is_ascii_digit()) {
+                    if let Ok(comm) = fs::read_to_string(entry.path().join("comm")) {
+                        if comm.trim() == "swm-center" {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
 pub fn collect_system_snapshot() -> SystemSnapshot {
     let mut sys = System::new();
     sys.refresh_cpu();
     sys.refresh_memory();
 
-    let hostname = System::host_name()
-        .or_else(|| std::env::var("COMPUTERNAME").ok())
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .unwrap_or_else(|| "unknown-host".to_string());
+    let hostname = detect_hostname();
 
     let domain = detect_domain();
     let os_family = detect_os_family().to_string();

@@ -143,6 +143,7 @@ pub async fn run_sync_cycle(
 
     let excluded_updates = status_resp.excluded_updates.clone();
     let in_maint_window = status_resp.in_maintenance_window;
+    let desktop_policy = status_resp.desktop_policy.clone();
 
     {
         let mut guard = shared.lock().await;
@@ -152,6 +153,7 @@ pub async fn run_sync_cycle(
         }
         guard.state.excluded_updates = excluded_updates.clone();
         guard.state.in_maintenance_window = in_maint_window;
+        guard.state.desktop_policy = desktop_policy.clone();
 
         let os_pending = detect_os_pending_reboot();
         let policy = RebootPolicy::from_wire(&status_resp.reboot_policy);
@@ -199,6 +201,21 @@ pub async fn run_sync_cycle(
         extra_reboot,
     );
 
+    // Session Watchdog: revive swm-center via scheduled task if killed while user session is active and enforce_tray is on
+    #[cfg(windows)]
+    if desktop_policy.enforce_tray
+        && !collected.report.logged_in_users.is_empty()
+        && !collected.report.center_running
+        && std::env::var("SWM_DISABLE_WATCHDOG").ok().as_deref() != Some("1")
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("schtasks.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["/Run", "/TN", r"\NS8SoftwareCenterGuardian"])
+            .output();
+    }
+
     let inv_ack = api.post_inventory(&collected.report).await?;
     {
         let mut guard = shared.lock().await;
@@ -237,6 +254,7 @@ pub async fn run_sync_cycle(
     // 4. Execute each signed job sequentially and report result
     let mut jobs_executed = 0usize;
     let mut software_mutated = false;
+    let mut force_inventory_refresh = false;
 
     for job in &pending_bundle.jobs {
         let should_run = {
@@ -278,13 +296,25 @@ pub async fn run_sync_cycle(
         if job.job_type == "software" && job_res.status == "succeeded" {
             software_mutated = true;
         }
-        if job_res.reboot_required {
+        if job.job_type.eq_ignore_ascii_case("remote_control")
+            && job.action.eq_ignore_ascii_case("force_sync")
+            && job_res.status == "succeeded"
+        {
+            software_mutated = true;
+            force_inventory_refresh = true;
+        }
+        if job.job_type.eq_ignore_ascii_case("remote_control")
+            && job.action.eq_ignore_ascii_case("remote_reboot")
+        {
+            let rb_req = shared.lock().await.state.reboot_state.reboot_required;
+            reboot_flag.store(rb_req, Ordering::SeqCst);
+        } else if job_res.reboot_required {
             reboot_flag.store(true, Ordering::SeqCst);
         }
         jobs_executed += 1;
     }
 
-    // If software was installed/removed and OS software registry/database changed, refresh inventory snapshot
+    // If software was installed/removed or force_sync was executed, refresh full inventory snapshot
     if software_mutated {
         let prev_sw_hash = shared.lock().await.state.last_software_hash.clone();
         let refreshed = build_inventory_report(
@@ -293,7 +323,9 @@ pub async fn run_sync_cycle(
             shared.lock().await.state.pending_os_updates_cache.clone(),
             reboot_flag.load(Ordering::SeqCst),
         );
-        if prev_sw_hash.as_deref() != Some(refreshed.current_software_hash.as_str()) {
+        if force_inventory_refresh
+            || prev_sw_hash.as_deref() != Some(refreshed.current_software_hash.as_str())
+        {
             let _ = api.post_inventory(&refreshed.report).await;
             let mut guard = shared.lock().await;
             guard.state.last_software_hash = Some(refreshed.current_software_hash);

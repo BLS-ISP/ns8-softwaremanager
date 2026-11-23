@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -21,8 +22,12 @@ from app.models import (
     device_group_links,
 )
 from app.schemas import (
+    BulkDeviceActionRequest,
+    BulkDeviceActionResponse,
     DeviceDetailOut,
+    DeviceNotifyRequest,
     DevicePatchRequest,
+    DeviceRemoteRebootRequest,
     DeviceSummaryOut,
     GroupBriefOut,
     GroupCreate,
@@ -34,7 +39,13 @@ from app.schemas import (
     PendingOsUpdateOut,
     SoftwareEntryOut,
 )
-from app.services import create_signed_job, evaluate_deployments_for_device
+from app.services import (
+    can_dispatch_job_now,
+    create_signed_job,
+    current_utc_time,
+    evaluate_deployments_for_device,
+    get_device_maintenance_windows,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-devices-groups"])
 
@@ -56,6 +67,7 @@ def _device_to_summary(device: Device, ws_online: bool = False) -> DeviceSummary
         status=device.status,
         is_online=is_online,
         reboot_required=device.reboot_required,
+        center_running=bool(device.center_running),
         ip_addresses=list(device.ip_addresses or []),
         logged_in_users=list(device.logged_in_users or []),
         group_ids=[g.id for g in device.groups],
@@ -120,6 +132,188 @@ async def list_devices(
         ]
 
     return [_device_to_summary(d, ws_hub.is_online(d.id)) for d in devices]
+
+
+@router.post("/devices/bulk-action", response_model=BulkDeviceActionResponse)
+async def bulk_device_action(
+    payload: BulkDeviceActionRequest,
+    request: Request,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> BulkDeviceActionResponse:
+    unique_ids = list(dict.fromkeys(payload.device_ids))
+    if not unique_ids:
+        return BulkDeviceActionResponse(affected=0, job_ids=[])
+
+    target_group: Optional[Group] = None
+    if payload.action == "assign_group":
+        if not payload.group_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="group_id is required for assign_group action",
+            )
+        target_group = await session.get(Group, payload.group_id)
+        if target_group is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Group not found",
+            )
+
+    notify_command = ""
+    if payload.action == "notify":
+        if not payload.title or not payload.title.strip() or not payload.message or not payload.message.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="title and message are required for notify action",
+            )
+        notify_command = json.dumps(
+            {
+                "title": payload.title,
+                "message": payload.message,
+                "urgent": payload.urgent,
+            },
+            ensure_ascii=False,
+        )
+
+    dev_res = await session.execute(
+        select(Device)
+        .options(
+            selectinload(Device.groups),
+            selectinload(Device.installed_software),
+            selectinload(Device.pending_updates),
+        )
+        .where(Device.id.in_(unique_ids))
+    )
+    devices_by_id = {d.id: d for d in dev_res.scalars().all()}
+    devices = [devices_by_id[did] for did in unique_ids if did in devices_by_id]
+
+    signing = request.app.state.signing
+    ws_hub = request.app.state.ws_hub
+    now = current_utc_time()
+
+    affected = 0
+    job_ids: list[str] = []
+    ws_job_pushes: list[tuple[str, str]] = []
+    ws_catalog_pushes: list[str] = []
+
+    for dev in devices:
+        if payload.action == "approve":
+            dev.status = "approved"
+            created_jobs = await evaluate_deployments_for_device(
+                session, dev, signing, settings, ws_hub=None, now=now
+            )
+            windows = await get_device_maintenance_windows(session, dev)
+            for j in created_jobs:
+                job_ids.append(j.id)
+                if can_dispatch_job_now(j, windows, now):
+                    ws_job_pushes.append((dev.id, j.id))
+            ws_catalog_pushes.append(dev.id)
+            affected += 1
+
+        elif payload.action == "assign_group":
+            assert target_group is not None
+            if all(g.id != target_group.id for g in dev.groups):
+                dev.groups.append(target_group)
+                await session.flush()
+            if dev.status == "approved":
+                created_jobs = await evaluate_deployments_for_device(
+                    session, dev, signing, settings, ws_hub=None, now=now
+                )
+                windows = await get_device_maintenance_windows(session, dev)
+                for j in created_jobs:
+                    job_ids.append(j.id)
+                    if can_dispatch_job_now(j, windows, now):
+                        ws_job_pushes.append((dev.id, j.id))
+                ws_catalog_pushes.append(dev.id)
+            affected += 1
+
+        elif payload.action == "sync":
+            if dev.status != "approved":
+                continue
+            job = create_signed_job(
+                device_id=dev.id,
+                job_type="remote_control",
+                action="force_sync",
+                target_id="agent",
+                version="",
+                sha256="",
+                command="",
+                respect_maintenance_window=False,
+                signing=signing,
+                settings=settings,
+                now=now,
+            )
+            session.add(job)
+            job_ids.append(job.id)
+            ws_job_pushes.append((dev.id, job.id))
+            affected += 1
+
+        elif payload.action == "scan_updates":
+            if dev.status != "approved":
+                continue
+            job = create_signed_job(
+                device_id=dev.id,
+                job_type="scan_updates",
+                action="scan",
+                target_id="os_updates",
+                version="",
+                sha256="",
+                command="",
+                respect_maintenance_window=False,
+                signing=signing,
+                settings=settings,
+                now=now,
+            )
+            session.add(job)
+            job_ids.append(job.id)
+            ws_job_pushes.append((dev.id, job.id))
+            affected += 1
+
+        elif payload.action == "notify":
+            if dev.status != "approved":
+                continue
+            job = create_signed_job(
+                device_id=dev.id,
+                job_type="remote_control",
+                action="admin_notify",
+                target_id="desktop",
+                version="",
+                sha256="",
+                command=notify_command,
+                respect_maintenance_window=False,
+                signing=signing,
+                settings=settings,
+                now=now,
+            )
+            session.add(job)
+            job_ids.append(job.id)
+            ws_job_pushes.append((dev.id, job.id))
+            affected += 1
+
+    session.add(
+        AuditLog(
+            actor=admin.username,
+            action=f"device.bulk.{payload.action}",
+            target_type="device_bulk",
+            target_id=",".join(unique_ids[:5]),
+            details={
+                "action": payload.action,
+                "requested_count": len(unique_ids),
+                "affected": affected,
+                "job_ids": job_ids,
+                "group_id": payload.group_id,
+            },
+        )
+    )
+    await session.commit()
+
+    for dev_id in dict.fromkeys(ws_catalog_pushes):
+        await ws_hub.send_to_device(dev_id, {"type": "catalog_updated"})
+    for dev_id, job_id in ws_job_pushes:
+        await ws_hub.send_to_device(dev_id, {"type": "job_available", "job_id": job_id})
+
+    return BulkDeviceActionResponse(affected=affected, job_ids=job_ids)
 
 
 @router.get("/devices/{device_id}", response_model=DeviceDetailOut)
@@ -410,7 +604,193 @@ async def trigger_device_scan_updates(
     return job_to_out(job, device.hostname)
 
 
+@router.post("/devices/{device_id}/sync", response_model=JobOut)
+async def trigger_device_sync(
+    device_id: str,
+    request: Request,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> JobOut:
+    device = await session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
+    if device.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot sync an unapproved or revoked device",
+        )
+    signing = request.app.state.signing
+    ws_hub = request.app.state.ws_hub
+    job = create_signed_job(
+        device_id=device.id,
+        job_type="remote_control",
+        action="force_sync",
+        target_id="agent",
+        version="",
+        sha256="",
+        command="",
+        respect_maintenance_window=False,
+        signing=signing,
+        settings=settings,
+    )
+    session.add(job)
+    session.add(
+        AuditLog(
+            actor=admin.username,
+            action="device.sync",
+            target_type="device",
+            target_id=device.id,
+            details={"job_id": job.id, "hostname": device.hostname},
+        )
+    )
+    await session.commit()
+    await session.refresh(job)
+    await ws_hub.send_to_device(device.id, {"type": "job_available", "job_id": job.id})
+    return job_to_out(job, device.hostname)
+
+
+@router.post("/devices/{device_id}/notify", response_model=JobOut)
+async def trigger_device_notify(
+    device_id: str,
+    payload: DeviceNotifyRequest,
+    request: Request,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> JobOut:
+    device = await session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
+    if device.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot notify an unapproved or revoked device",
+        )
+    signing = request.app.state.signing
+    ws_hub = request.app.state.ws_hub
+    command_json = json.dumps(
+        {
+            "title": payload.title,
+            "message": payload.message,
+            "urgent": payload.urgent,
+        },
+        ensure_ascii=False,
+    )
+    job = create_signed_job(
+        device_id=device.id,
+        job_type="remote_control",
+        action="admin_notify",
+        target_id="desktop",
+        version="",
+        sha256="",
+        command=command_json,
+        respect_maintenance_window=False,
+        signing=signing,
+        settings=settings,
+    )
+    session.add(job)
+    session.add(
+        AuditLog(
+            actor=admin.username,
+            action="device.notify",
+            target_type="device",
+            target_id=device.id,
+            details={
+                "job_id": job.id,
+                "hostname": device.hostname,
+                "title": payload.title,
+                "urgent": payload.urgent,
+            },
+        )
+    )
+    await session.commit()
+    await session.refresh(job)
+    await ws_hub.send_to_device(device.id, {"type": "job_available", "job_id": job.id})
+    return job_to_out(job, device.hostname)
+
+
+@router.post("/devices/{device_id}/reboot", response_model=JobOut)
+async def trigger_device_reboot(
+    device_id: str,
+    payload: DeviceRemoteRebootRequest,
+    request: Request,
+    admin: AdminUser = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> JobOut:
+    device = await session.get(Device, device_id)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device not found"
+        )
+    if device.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reboot an unapproved or revoked device",
+        )
+    signing = request.app.state.signing
+    ws_hub = request.app.state.ws_hub
+    command_json = json.dumps(
+        {
+            "mode": payload.mode,
+            "grace_minutes": payload.grace_minutes,
+        }
+    )
+    job = create_signed_job(
+        device_id=device.id,
+        job_type="remote_control",
+        action="remote_reboot",
+        target_id=payload.mode,
+        version="",
+        sha256="",
+        command=command_json,
+        respect_maintenance_window=False,
+        signing=signing,
+        settings=settings,
+    )
+    session.add(job)
+    session.add(
+        AuditLog(
+            actor=admin.username,
+            action="device.reboot",
+            target_type="device",
+            target_id=device.id,
+            details={
+                "job_id": job.id,
+                "hostname": device.hostname,
+                "mode": payload.mode,
+                "grace_minutes": payload.grace_minutes,
+            },
+        )
+    )
+    await session.commit()
+    await session.refresh(job)
+    await ws_hub.send_to_device(device.id, {"type": "job_available", "job_id": job.id})
+    return job_to_out(job, device.hostname)
+
+
 # --- Groups ---
+
+
+def _group_to_out(group: Group, device_count: int = 0) -> GroupOut:
+    return GroupOut(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        reboot_policy=group.reboot_policy,
+        grace_period_minutes=group.grace_period_minutes,
+        enforce_tray=bool(group.enforce_tray),
+        allow_self_service=bool(group.allow_self_service),
+        allow_user_os_updates=bool(group.allow_user_os_updates),
+        silent_notifications=bool(group.silent_notifications),
+        device_count=device_count,
+        created_at=group.created_at,
+    )
 
 
 async def _group_device_counts(session: AsyncSession) -> dict[str, int]:
@@ -428,18 +808,7 @@ async def list_groups(
 ) -> list[GroupOut]:
     counts = await _group_device_counts(session)
     res = await session.execute(select(Group).order_by(Group.name))
-    return [
-        GroupOut(
-            id=g.id,
-            name=g.name,
-            description=g.description,
-            reboot_policy=g.reboot_policy,
-            grace_period_minutes=g.grace_period_minutes,
-            device_count=counts.get(g.id, 0),
-            created_at=g.created_at,
-        )
-        for g in res.scalars().all()
-    ]
+    return [_group_to_out(g, counts.get(g.id, 0)) for g in res.scalars().all()]
 
 
 @router.post("/groups", response_model=GroupOut)
@@ -459,6 +828,10 @@ async def create_group(
         description=payload.description,
         reboot_policy=payload.reboot_policy,
         grace_period_minutes=payload.grace_period_minutes,
+        enforce_tray=payload.enforce_tray,
+        allow_self_service=payload.allow_self_service,
+        allow_user_os_updates=payload.allow_user_os_updates,
+        silent_notifications=payload.silent_notifications,
     )
     session.add(group)
     session.add(
@@ -472,21 +845,14 @@ async def create_group(
     )
     await session.commit()
     await session.refresh(group)
-    return GroupOut(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        reboot_policy=group.reboot_policy,
-        grace_period_minutes=group.grace_period_minutes,
-        device_count=0,
-        created_at=group.created_at,
-    )
+    return _group_to_out(group, 0)
 
 
 @router.patch("/groups/{group_id}", response_model=GroupOut)
 async def update_group(
     group_id: str,
     payload: GroupUpdate,
+    request: Request,
     admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_db),
 ) -> GroupOut:
@@ -509,6 +875,21 @@ async def update_group(
         group.reboot_policy = payload.reboot_policy
     if payload.grace_period_minutes is not None:
         group.grace_period_minutes = payload.grace_period_minutes
+    if payload.enforce_tray is not None:
+        group.enforce_tray = payload.enforce_tray
+    if payload.allow_self_service is not None:
+        group.allow_self_service = payload.allow_self_service
+    if payload.allow_user_os_updates is not None:
+        group.allow_user_os_updates = payload.allow_user_os_updates
+    if payload.silent_notifications is not None:
+        group.silent_notifications = payload.silent_notifications
+
+    member_res = await session.execute(
+        select(device_group_links.c.device_id).where(
+            device_group_links.c.group_id == group.id
+        )
+    )
+    member_device_ids = [row[0] for row in member_res.all()]
 
     session.add(
         AuditLog(
@@ -522,15 +903,12 @@ async def update_group(
     await session.commit()
     await session.refresh(group)
     counts = await _group_device_counts(session)
-    return GroupOut(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        reboot_policy=group.reboot_policy,
-        grace_period_minutes=group.grace_period_minutes,
-        device_count=counts.get(group.id, 0),
-        created_at=group.created_at,
-    )
+
+    ws_hub = request.app.state.ws_hub
+    for dev_id in member_device_ids:
+        await ws_hub.send_to_device(dev_id, {"type": "catalog_updated"})
+
+    return _group_to_out(group, counts.get(group.id, 0))
 
 
 @router.delete("/groups/{group_id}")

@@ -5,16 +5,27 @@ import {
   Ban,
   CheckCircle,
   Eye,
+  FolderKanban,
   Laptop,
+  MessageSquareShare,
+  MonitorCheck,
   RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
+  X,
+  Zap,
 } from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
-import type { Device, DeviceGroup } from '@/api/types'
+import type {
+  BulkDeviceActionType,
+  Device,
+  DeviceGroup,
+  DeviceNotifyPayload,
+} from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import DeviceNotifyModal from '@/components/DeviceNotifyModal.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -33,12 +44,45 @@ const statusFilter = ref<string>((route.query.status as string) || '')
 const osFilter = ref<string>('')
 const groupFilter = ref<string>('')
 
+const selectedIds = ref<string[]>([])
+const bulkGroupId = ref<string>('')
+const bulkBusy = ref(false)
+const bulkNotifyOpen = ref(false)
+
 const confirmTarget = ref<{ action: 'revoke' | 'delete'; device: Device } | null>(null)
 const confirmBusy = ref(false)
 
 const hasActiveFilters = computed(() =>
   Boolean(search.value.trim() || statusFilter.value || osFilter.value || groupFilter.value),
 )
+
+const allSelected = computed(
+  () => devices.value.length > 0 && devices.value.every((d) => selectedIds.value.includes(d.id)),
+)
+
+const someSelected = computed(
+  () => selectedIds.value.length > 0 && !allSelected.value,
+)
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedIds.value = []
+  } else {
+    selectedIds.value = devices.value.map((d) => d.id)
+  }
+}
+
+function toggleSelectDevice(id: string) {
+  if (selectedIds.value.includes(id)) {
+    selectedIds.value = selectedIds.value.filter((item) => item !== id)
+  } else {
+    selectedIds.value = [...selectedIds.value, id]
+  }
+}
+
+function clearSelection() {
+  selectedIds.value = []
+}
 
 function resetFilters() {
   search.value = ''
@@ -63,6 +107,8 @@ async function loadData() {
     ])
     devices.value = devList
     groups.value = grpList
+    const validIds = new Set(devList.map((d) => d.id))
+    selectedIds.value = selectedIds.value.filter((id) => validIds.has(id))
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Geräteliste konnte nicht geladen werden'
   } finally {
@@ -84,6 +130,18 @@ async function handleApprove(device: Device) {
     toast.success('Gerät freigegeben', `${device.hostname} darf nun signierte Aufträge empfangen.`)
   } catch (err) {
     toast.error('Freigabe fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  }
+}
+
+async function handleSyncDevice(device: Device) {
+  try {
+    await adminApi.syncDevice(device.id)
+    toast.success(
+      'Sofort-Synchronisation gesendet',
+      `${device.hostname} gleicht Inventar, Katalog und Richtlinien ab.`,
+    )
+  } catch (err) {
+    toast.error('Synchronisation fehlgeschlagen', err instanceof Error ? err.message : undefined)
   }
 }
 
@@ -118,6 +176,7 @@ async function executeConfirmedAction() {
     } else {
       await adminApi.deleteDevice(device.id)
       devices.value = devices.value.filter((d) => d.id !== device.id)
+      selectedIds.value = selectedIds.value.filter((id) => id !== device.id)
       toast.success('Gerät entfernt', `${device.hostname} wurde aus der Flotte gelöscht.`)
     }
     confirmTarget.value = null
@@ -143,6 +202,63 @@ async function handleScanUpdates(device: Device) {
   }
 }
 
+async function executeBulkAction(action: Exclude<BulkDeviceActionType, 'notify'>) {
+  if (selectedIds.value.length === 0 || bulkBusy.value) return
+  if (action === 'assign_group' && !bulkGroupId.value) {
+    toast.warning('Bitte Zielgruppe wählen', 'Wählen Sie eine Gerätegruppe für die Zuweisung aus.')
+    return
+  }
+
+  bulkBusy.value = true
+  try {
+    const res = await adminApi.bulkDeviceAction({
+      device_ids: [...selectedIds.value],
+      action,
+      group_id: action === 'assign_group' ? bulkGroupId.value : undefined,
+    })
+
+    const actionLabels: Record<Exclude<BulkDeviceActionType, 'notify'>, string> = {
+      approve: 'Freigabe ausgeführt',
+      sync: 'Flotten-Synchronisation gestartet',
+      scan_updates: 'OS-Update-Scan eingereiht',
+      assign_group: 'Gruppenzuweisung aktualisiert',
+    }
+
+    toast.success(
+      actionLabels[action],
+      `${res.affected ?? selectedIds.value.length} System(e) verarbeitet.`,
+    )
+    await loadData()
+  } catch (err) {
+    toast.error('Sammelaktion fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  } finally {
+    bulkBusy.value = false
+  }
+}
+
+async function handleBulkNotifySubmit(payload: DeviceNotifyPayload) {
+  if (selectedIds.value.length === 0 || bulkBusy.value) return
+  bulkBusy.value = true
+  try {
+    const res = await adminApi.bulkDeviceAction({
+      device_ids: [...selectedIds.value],
+      action: 'notify',
+      title: payload.title,
+      message: payload.message,
+      urgent: payload.urgent,
+    })
+    bulkNotifyOpen.value = false
+    toast.success(
+      'Desktop-Rundnachricht gesendet',
+      `An ${res.affected ?? selectedIds.value.length} Gerät(e) übermittelt.`,
+    )
+  } catch (err) {
+    toast.error('Nachricht konnte nicht gesendet werden', err instanceof Error ? err.message : undefined)
+  } finally {
+    bulkBusy.value = false
+  }
+}
+
 onMounted(() => {
   loadData()
 })
@@ -157,7 +273,7 @@ onMounted(() => {
           Geräteverwaltung &amp; Flotte
         </h1>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Echtzeit-Status, Onboarding-Freigaben, Neustart-Erkennung und Inventar aller Endpunkte
+          Echtzeit-Status, Onboarding-Freigaben, Flottensteuerung und Inventar aller Endpunkte
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -231,6 +347,101 @@ onMounted(() => {
       </select>
     </div>
 
+    <!-- Bulk Fleet Actions Toolbar -->
+    <div
+      v-if="selectedIds.length > 0"
+      data-testid="bulk-actions-bar"
+      class="flex flex-col gap-3 rounded-xl border border-sky-200 bg-gradient-to-r from-sky-50 via-cyan-50/70 to-white p-3.5 shadow-sm lg:flex-row lg:items-center lg:justify-between dark:border-sky-500/30 dark:from-sky-500/15 dark:via-slate-900 dark:to-slate-900"
+    >
+      <div class="flex items-center gap-2.5">
+        <span
+          class="inline-flex items-center justify-center rounded-lg bg-sky-600 px-2.5 py-1 text-xs font-bold text-white"
+        >
+          {{ selectedIds.length }} ausgewählt
+        </span>
+        <span class="text-xs font-medium text-slate-700 dark:text-slate-200">
+          Flotten-Sammelsteuerung (Ed25519-signiert)
+        </span>
+        <button
+          type="button"
+          data-testid="bulk-clear-selection-btn"
+          class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          @click="clearSelection"
+        >
+          <X class="h-3.5 w-3.5" aria-hidden="true" />
+          Auswahl aufheben
+        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-testid="bulk-approve-btn"
+          :disabled="bulkBusy"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
+          @click="executeBulkAction('approve')"
+        >
+          <CheckCircle class="h-3.5 w-3.5" aria-hidden="true" />
+          Freigeben
+        </button>
+
+        <button
+          type="button"
+          data-testid="bulk-sync-btn"
+          :disabled="bulkBusy"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+          @click="executeBulkAction('sync')"
+        >
+          <Zap class="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+          Jetzt synchronisieren
+        </button>
+
+        <button
+          type="button"
+          data-testid="bulk-scan-btn"
+          :disabled="bulkBusy"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+          @click="executeBulkAction('scan_updates')"
+        >
+          <RefreshCw class="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+          Update-Scan
+        </button>
+
+        <div class="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white p-0.5 pl-2 dark:border-slate-700 dark:bg-slate-800">
+          <FolderKanban class="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+          <select
+            v-model="bulkGroupId"
+            data-testid="bulk-group-select"
+            aria-label="Zielgruppe für Sammelzuweisung"
+            class="bg-transparent py-1 pr-2 text-xs font-medium text-slate-700 focus:outline-none dark:text-slate-200"
+          >
+            <option value="">Gruppe zuweisen…</option>
+            <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+          <button
+            type="button"
+            data-testid="bulk-assign-group-btn"
+            :disabled="bulkBusy || !bulkGroupId"
+            class="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40 dark:bg-sky-600 dark:hover:bg-sky-500"
+            @click="executeBulkAction('assign_group')"
+          >
+            Anwenden
+          </button>
+        </div>
+
+        <button
+          type="button"
+          data-testid="bulk-notify-btn"
+          :disabled="bulkBusy"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-sky-700 disabled:opacity-50"
+          @click="bulkNotifyOpen = true"
+        >
+          <MessageSquareShare class="h-3.5 w-3.5" aria-hidden="true" />
+          Nachricht senden…
+        </button>
+      </div>
+    </div>
+
     <div
       v-if="error"
       role="alert"
@@ -280,6 +491,17 @@ onMounted(() => {
             class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800/70 dark:text-slate-400"
           >
             <tr>
+              <th class="w-10 px-4 py-3.5">
+                <input
+                  data-testid="select-all-devices"
+                  aria-label="Alle angezeigten Geräte auswählen"
+                  type="checkbox"
+                  :checked="allSelected"
+                  :indeterminate.prop="someSelected"
+                  class="h-4 w-4 cursor-pointer rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="px-4 py-3.5">System / Hostname</th>
               <th class="px-4 py-3.5">Betriebssystem</th>
               <th class="px-4 py-3.5">Verbindung &amp; Freigabe</th>
@@ -294,8 +516,20 @@ onMounted(() => {
               v-for="dev in devices"
               :key="dev.id"
               :data-testid="`device-row-${dev.id}`"
-              class="hover:bg-slate-50/80 dark:hover:bg-slate-800/50"
+              class="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/50"
+              :class="{ 'bg-sky-50/50 dark:bg-sky-500/10': selectedIds.includes(dev.id) }"
             >
+              <td class="px-4 py-3.5">
+                <input
+                  :data-testid="`select-device-${dev.id}`"
+                  :aria-label="`Gerät ${dev.hostname} auswählen`"
+                  type="checkbox"
+                  :checked="selectedIds.includes(dev.id)"
+                  class="h-4 w-4 cursor-pointer rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                  @change="toggleSelectDevice(dev.id)"
+                />
+              </td>
+
               <td class="px-4 py-3.5">
                 <RouterLink
                   :to="`/devices/${dev.id}`"
@@ -320,6 +554,15 @@ onMounted(() => {
                 <div class="flex flex-wrap items-center gap-1.5">
                   <StatusBadge :variant="dev.is_online ? 'online' : 'offline'" />
                   <StatusBadge :variant="dev.status" />
+                  <span
+                    v-if="dev.center_running === true"
+                    :data-testid="`center-active-badge-${dev.id}`"
+                    title="NS8 Software Center läuft aktiv in einer Benutzersitzung"
+                    class="inline-flex items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[11px] font-medium text-cyan-800 ring-1 ring-inset ring-cyan-600/20 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-400/30"
+                  >
+                    <MonitorCheck class="h-3 w-3" aria-hidden="true" />
+                    Software Center aktiv
+                  </span>
                 </div>
               </td>
 
@@ -386,6 +629,19 @@ onMounted(() => {
                   <button
                     v-if="dev.status === 'approved'"
                     type="button"
+                    :data-testid="`sync-device-${dev.id}`"
+                    aria-label="Inventar & Richtlinien sofort synchronisieren"
+                    title="Inventar & Richtlinien sofort synchronisieren"
+                    class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    @click="handleSyncDevice(dev)"
+                  >
+                    <Zap class="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+                    Sync
+                  </button>
+
+                  <button
+                    v-if="dev.status === 'approved'"
+                    type="button"
                     aria-label="OS-Update-Scan anfordern"
                     title="OS-Update-Scan anfordern"
                     class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
@@ -433,6 +689,14 @@ onMounted(() => {
         </table>
       </div>
     </div>
+
+    <DeviceNotifyModal
+      :open="bulkNotifyOpen"
+      :target-label="`${selectedIds.length} ausgewählte System(e)`"
+      :loading="bulkBusy"
+      @cancel="bulkNotifyOpen = false"
+      @submit="handleBulkNotifySubmit"
+    />
 
     <ConfirmDialog
       :open="Boolean(confirmTarget)"

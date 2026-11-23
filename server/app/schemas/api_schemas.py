@@ -112,11 +112,22 @@ class EnrollmentTokenOut(BaseModel):
 # --- Groups & Maintenance Windows ---
 
 
+class DesktopPolicyOut(BaseModel):
+    enforce_tray: bool = True
+    allow_self_service: bool = True
+    allow_user_os_updates: bool = True
+    silent_notifications: bool = False
+
+
 class GroupCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     description: str = Field(default="", max_length=512)
     reboot_policy: Literal["never", "maintenance_window", "grace_period"] = "never"
     grace_period_minutes: int = Field(default=240, ge=5, le=10080)
+    enforce_tray: bool = True
+    allow_self_service: bool = True
+    allow_user_os_updates: bool = True
+    silent_notifications: bool = False
 
 
 class GroupUpdate(BaseModel):
@@ -124,6 +135,10 @@ class GroupUpdate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=512)
     reboot_policy: Optional[Literal["never", "maintenance_window", "grace_period"]] = None
     grace_period_minutes: Optional[int] = Field(default=None, ge=5, le=10080)
+    enforce_tray: Optional[bool] = None
+    allow_self_service: Optional[bool] = None
+    allow_user_os_updates: Optional[bool] = None
+    silent_notifications: Optional[bool] = None
 
 
 class GroupOut(BaseModel):
@@ -132,6 +147,10 @@ class GroupOut(BaseModel):
     description: str
     reboot_policy: str
     grace_period_minutes: int
+    enforce_tray: bool = True
+    allow_self_service: bool = True
+    allow_user_os_updates: bool = True
+    silent_notifications: bool = False
     device_count: int = 0
     created_at: datetime
 
@@ -237,6 +256,36 @@ class DevicePatchRequest(BaseModel):
     tags: Optional[list[str]] = None
 
 
+class DeviceNotifyRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    message: str = Field(..., min_length=1, max_length=4000)
+    urgent: bool = False
+
+
+class DeviceRemoteRebootRequest(BaseModel):
+    mode: Literal["grace_period", "immediate", "cancel"]
+    grace_minutes: int = Field(default=60, ge=1, le=10080)
+
+    @field_validator("grace_minutes", mode="before")
+    @classmethod
+    def default_none_grace_minutes(cls, v: Any) -> Any:
+        return 60 if v is None else v
+
+
+class BulkDeviceActionRequest(BaseModel):
+    device_ids: list[str]
+    action: Literal["approve", "sync", "scan_updates", "assign_group", "notify"]
+    group_id: Optional[str] = None
+    title: Optional[str] = None
+    message: Optional[str] = None
+    urgent: bool = False
+
+
+class BulkDeviceActionResponse(BaseModel):
+    affected: int
+    job_ids: list[str] = Field(default_factory=list)
+
+
 class DeviceSummaryOut(BaseModel):
     id: str
     hostname: str
@@ -251,6 +300,7 @@ class DeviceSummaryOut(BaseModel):
     status: str
     is_online: bool
     reboot_required: bool
+    center_running: bool = False
     ip_addresses: list[str] = Field(default_factory=list)
     logged_in_users: list[str] = Field(default_factory=list)
     group_ids: list[str] = Field(default_factory=list)
@@ -260,6 +310,9 @@ class DeviceSummaryOut(BaseModel):
     installed_software_count: int = 0
     last_seen_at: Optional[datetime] = None
     created_at: datetime
+
+
+DeviceOut = DeviceSummaryOut
 
 
 class DeviceDetailOut(DeviceSummaryOut):
@@ -478,6 +531,7 @@ class AgentStatusResponse(BaseModel):
     in_maintenance_window: bool = True
     excluded_updates: list[str] = Field(default_factory=list)
     server_public_key_b64: str
+    desktop_policy: DesktopPolicyOut = Field(default_factory=DesktopPolicyOut)
 
 
 class AgentInventoryRequest(BaseModel):
@@ -495,6 +549,7 @@ class AgentInventoryRequest(BaseModel):
     ip_addresses: list[str] = Field(default_factory=list)
     logged_in_users: list[str] = Field(default_factory=list)
     reboot_required: bool = False
+    center_running: bool = False
     software_hash: Optional[str] = None
     installed_software: Optional[list[SoftwareEntryIn]] = None
     pending_os_updates: Optional[list[PendingOsUpdateIn]] = None

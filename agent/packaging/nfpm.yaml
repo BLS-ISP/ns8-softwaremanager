@@ -1,7 +1,7 @@
 name: "ns8-swm-agent"
 arch: "amd64"
 platform: "linux"
-version: "1.0.0"
+version: "1.1.0"
 section: "admin"
 priority: "optional"
 maintainer: "BLS-ISP <info@bls-isp.de>"
@@ -39,6 +39,16 @@ contents:
     dst: "/usr/share/applications/swm-center.desktop"
     file_info:
       mode: 0644
+
+  - src: "./ns8-swm-center.service"
+    dst: "/etc/systemd/user/ns8-swm-center.service"
+    type: "config|noreplace"
+    file_info:
+      mode: 0644
+
+  - src: "/etc/systemd/user/ns8-swm-center.service"
+    dst: "/etc/systemd/user/default.target.wants/ns8-swm-center.service"
+    type: "symlink"
 
   - dst: "/etc/ns8-swm"
     type: "dir"

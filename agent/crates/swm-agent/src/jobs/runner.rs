@@ -1,7 +1,7 @@
 use crate::config::{AgentConfig, AgentRuntimeState};
 use crate::inventory::build_inventory_report;
 use crate::patching::linux_pkg::{install_linux_os_updates, scan_linux_os_updates};
-use crate::patching::reboot_manager::RebootManager;
+use crate::patching::reboot_manager::{execute_system_reboot, RebootManager};
 use crate::patching::windows_wua::{PowerShellWuaProvider, WuaProvider};
 use crate::self_update::stage_and_swap_binary;
 use crate::software::detection::{check_blocked_processes, evaluate_detection_rule};
@@ -13,9 +13,13 @@ use crate::software::winget::{resolve_winget_binary, run_winget_action};
 use crate::transport::api_client::AgentApiClient;
 use crate::transport::downloader::ResumableDownloader;
 use chrono::Utc;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use swm_common::{verify_signed_job, JobActivityEntry, JobResult, SignedJob, WsAgentFrame};
+use swm_common::{
+    verify_signed_job, AdminDesktopMessage, JobActivityEntry, JobResult, RebootPolicy, SignedJob,
+    WsAgentFrame,
+};
 use tokio::sync::mpsc;
 
 pub fn sanitize_filename(raw: &str) -> String {
@@ -124,6 +128,7 @@ pub async fn verify_and_execute_job(
         "os_patch" => execute_os_patch_job(ctx, job).await,
         "software" => execute_software_job(ctx, job).await,
         "self_update" => execute_self_update_job(ctx, job).await,
+        "remote_control" => execute_remote_control_job(ctx, job),
         other => JobResult {
             status: "failed".to_string(),
             exit_code: 2,
@@ -515,6 +520,212 @@ async fn execute_self_update_job(ctx: &mut JobExecutionContext<'_>, job: &Signed
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct AdminNotifyPayload {
+    pub title: String,
+    pub message: String,
+    #[serde(default)]
+    pub urgent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteRebootPayload {
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub grace_minutes: Option<u32>,
+}
+
+fn execute_remote_control_job(ctx: &mut JobExecutionContext<'_>, job: &SignedJob) -> JobResult {
+    match job.action.trim().to_ascii_lowercase().as_str() {
+        "force_sync" => JobResult {
+            status: "succeeded".to_string(),
+            exit_code: 0,
+            reboot_required: false,
+            stdout: "Immediate inventory and policy sync triggered.".to_string(),
+            stderr: String::new(),
+        },
+
+        "admin_notify" => {
+            let raw = job.command.as_deref().unwrap_or("");
+            let payload: AdminNotifyPayload = match serde_json::from_str(raw) {
+                Ok(p) => p,
+                Err(err) => {
+                    return JobResult {
+                        status: "failed".to_string(),
+                        exit_code: 1,
+                        reboot_required: false,
+                        stdout: String::new(),
+                        stderr: format!("Invalid admin_notify JSON payload: {err}"),
+                    };
+                }
+            };
+
+            let entry = AdminDesktopMessage {
+                id: job.job_id.clone(),
+                title: payload.title.clone(),
+                message: payload.message,
+                urgent: payload.urgent,
+                created_at: AgentRuntimeState::now_iso8601(),
+            };
+
+            ctx.state.admin_messages.retain(|m| m.id != entry.id);
+            ctx.state.admin_messages.insert(0, entry);
+            if ctx.state.admin_messages.len() > 10 {
+                ctx.state.admin_messages.truncate(10);
+            }
+            let _ = ctx.state.save(ctx.data_dir);
+
+            JobResult {
+                status: "succeeded".to_string(),
+                exit_code: 0,
+                reboot_required: false,
+                stdout: format!("Admin notification '{}' stored for desktop client.", payload.title),
+                stderr: String::new(),
+            }
+        }
+
+        "remote_reboot" => {
+            let raw = job.command.as_deref().filter(|s| !s.trim().is_empty()).unwrap_or("{}");
+            let payload: RemoteRebootPayload = match serde_json::from_str(raw) {
+                Ok(p) => p,
+                Err(err) => {
+                    return JobResult {
+                        status: "failed".to_string(),
+                        exit_code: 1,
+                        reboot_required: false,
+                        stdout: String::new(),
+                        stderr: format!("Invalid remote_reboot JSON payload: {err}"),
+                    };
+                }
+            };
+
+            let mode = payload
+                .mode
+                .as_deref()
+                .unwrap_or(&job.target_id)
+                .trim()
+                .to_ascii_lowercase();
+            let now_ts = Utc::now().timestamp();
+
+            match mode.as_str() {
+                "cancel" => {
+                    if let Err(err) = ctx.reboot_mgr.clear_reboot_state() {
+                        return JobResult {
+                            status: "failed".to_string(),
+                            exit_code: 1,
+                            reboot_required: false,
+                            stdout: String::new(),
+                            stderr: format!("Failed canceling pending reboot: {err}"),
+                        };
+                    }
+                    ctx.state.reboot_state = ctx.reboot_mgr.state().clone();
+                    let _ = ctx.state.save(ctx.data_dir);
+                    JobResult {
+                        status: "succeeded".to_string(),
+                        exit_code: 0,
+                        reboot_required: false,
+                        stdout: "Pending system reboot canceled by administrator.".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+
+                "grace_period" => {
+                    let grace = payload.grace_minutes.unwrap_or(60).max(1);
+                    let _ = ctx.reboot_mgr.clear_reboot_state();
+                    if let Err(err) = ctx.reboot_mgr.sync_policy_and_os_state(
+                        RebootPolicy::GracePeriod,
+                        grace,
+                        true,
+                        now_ts,
+                    ) {
+                        return JobResult {
+                            status: "failed".to_string(),
+                            exit_code: 1,
+                            reboot_required: false,
+                            stdout: String::new(),
+                            stderr: format!("Failed setting grace_period reboot state: {err}"),
+                        };
+                    }
+                    if let Err(err) = ctx
+                        .reboot_mgr
+                        .mark_reboot_required(Some(job.job_id.clone()), now_ts)
+                    {
+                        return JobResult {
+                            status: "failed".to_string(),
+                            exit_code: 1,
+                            reboot_required: false,
+                            stdout: String::new(),
+                            stderr: format!("Failed marking reboot required: {err}"),
+                        };
+                    }
+                    ctx.state.reboot_state = ctx.reboot_mgr.state().clone();
+                    let _ = ctx.state.save(ctx.data_dir);
+                    JobResult {
+                        status: "succeeded".to_string(),
+                        exit_code: 0,
+                        reboot_required: true,
+                        stdout: format!(
+                            "Scheduled remote reboot with {grace}-minute grace period."
+                        ),
+                        stderr: String::new(),
+                    }
+                }
+
+                "immediate" => {
+                    if let Err(err) = ctx
+                        .reboot_mgr
+                        .mark_reboot_required(Some(job.job_id.clone()), now_ts)
+                    {
+                        return JobResult {
+                            status: "failed".to_string(),
+                            exit_code: 1,
+                            reboot_required: false,
+                            stdout: String::new(),
+                            stderr: format!("Failed marking immediate reboot state: {err}"),
+                        };
+                    }
+                    ctx.state.reboot_state = ctx.reboot_mgr.state().clone();
+                    let _ = ctx.state.save(ctx.data_dir);
+                    if let Err(err) = execute_system_reboot(ctx.data_dir, "remote_admin_immediate")
+                    {
+                        return JobResult {
+                            status: "failed".to_string(),
+                            exit_code: 1,
+                            reboot_required: true,
+                            stdout: String::new(),
+                            stderr: format!("Failed triggering immediate OS reboot: {err}"),
+                        };
+                    }
+                    JobResult {
+                        status: "succeeded".to_string(),
+                        exit_code: 0,
+                        reboot_required: true,
+                        stdout: "Immediate system reboot initiated by administrator.".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+
+                other => JobResult {
+                    status: "failed".to_string(),
+                    exit_code: 1,
+                    reboot_required: false,
+                    stdout: String::new(),
+                    stderr: format!("Unsupported remote_reboot mode '{other}'"),
+                },
+            }
+        }
+
+        other => JobResult {
+            status: "failed".to_string(),
+            exit_code: 2,
+            reboot_required: false,
+            stdout: String::new(),
+            stderr: format!("Unsupported remote_control action '{other}'"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,5 +852,118 @@ mod tests {
         assert_eq!(res.status, "succeeded");
         assert_eq!(res.exit_code, 0);
         assert!(res.stdout.contains("already satisfies detection rule"));
+    }
+
+    #[tokio::test]
+    async fn test_remote_control_signed_jobs_notify_sync_and_reboot_modes() {
+        let dir = tempdir().unwrap();
+        let kp = TestSigningKeypair::generate();
+        let cfg = AgentConfig {
+            server_url: "http://127.0.0.1:9".to_string(),
+            device_id: "dev-rc-1".to_string(),
+            device_token: "tok-rc-1".to_string(),
+            status: "approved".to_string(),
+            server_public_key_b64: kp.public_key_b64(),
+            enrolled_at: "2026-11-23T00:00:00Z".to_string(),
+        };
+        let api = AgentApiClient::new(&cfg.server_url, Some(cfg.device_token.clone())).unwrap();
+        let mut state = AgentRuntimeState::default();
+        let mut reboot_mgr = RebootManager::load(dir.path());
+
+        let make_rc_job = |id: &str, action: &str, target: &str, cmd: &str| {
+            let mut j = SignedJob {
+                job_id: id.to_string(),
+                device_id: "dev-rc-1".to_string(),
+                job_type: "remote_control".to_string(),
+                action: action.to_string(),
+                target_id: target.to_string(),
+                version: String::new(),
+                sha256: None,
+                command: Some(cmd.to_string()),
+                expires_at_unix: Utc::now().timestamp() + 3600,
+                signature_b64: String::new(),
+                download_url: None,
+                update_ids: vec![],
+                security_only: false,
+                package_meta: None,
+                detection_rule: None,
+                blocked_processes: vec![],
+                return_codes: HashMap::new(),
+            };
+            kp.sign_job(&mut j);
+            j
+        };
+
+        let mut ctx = JobExecutionContext {
+            data_dir: dir.path(),
+            config: &cfg,
+            api: &api,
+            state: &mut state,
+            reboot_mgr: &mut reboot_mgr,
+            ws_log_tx: None,
+            target_agent_exe: None,
+        };
+
+        // 1. force_sync
+        let sync_job = make_rc_job("rc-sync-1", "force_sync", "agent", "");
+        let r_sync = verify_and_execute_job(&mut ctx, &sync_job).await;
+        assert_eq!(r_sync.status, "succeeded");
+        assert_eq!(r_sync.exit_code, 0);
+        assert_eq!(r_sync.stdout, "Immediate inventory and policy sync triggered.");
+
+        // 2. admin_notify (cap at 10 messages, newest first)
+        for i in 0..12 {
+            let cmd = serde_json::json!({
+                "title": format!("IT Hinweis #{i}"),
+                "message": format!("Bitte beachten #{i}"),
+                "urgent": i == 11,
+            })
+            .to_string();
+            let notify_job = make_rc_job(&format!("rc-msg-{i}"), "admin_notify", "desktop", &cmd);
+            let r_not = verify_and_execute_job(&mut ctx, &notify_job).await;
+            assert_eq!(r_not.status, "succeeded");
+        }
+        assert_eq!(ctx.state.admin_messages.len(), 10);
+        assert_eq!(ctx.state.admin_messages[0].id, "rc-msg-11");
+        assert!(ctx.state.admin_messages[0].urgent);
+
+        // 3. remote_reboot: grace_period -> cancel -> immediate
+        let rb_grace = make_rc_job(
+            "rc-rb-grace",
+            "remote_reboot",
+            "grace_period",
+            r#"{"mode":"grace_period","grace_minutes":45}"#,
+        );
+        let r_grace = verify_and_execute_job(&mut ctx, &rb_grace).await;
+        assert_eq!(r_grace.status, "succeeded");
+        assert!(r_grace.reboot_required);
+        assert!(ctx.state.reboot_state.reboot_required);
+        assert_eq!(ctx.state.reboot_state.policy, RebootPolicy::GracePeriod);
+        assert_eq!(ctx.state.reboot_state.grace_period_minutes, 45);
+        assert!(ctx.state.reboot_state.deadline_unix.is_some());
+
+        let rb_cancel = make_rc_job(
+            "rc-rb-cancel",
+            "remote_reboot",
+            "cancel",
+            r#"{"mode":"cancel"}"#,
+        );
+        let r_cancel = verify_and_execute_job(&mut ctx, &rb_cancel).await;
+        assert_eq!(r_cancel.status, "succeeded");
+        assert!(!r_cancel.reboot_required);
+        assert!(!ctx.state.reboot_state.reboot_required);
+        assert!(ctx.state.reboot_state.deadline_unix.is_none());
+
+        let rb_imm = make_rc_job(
+            "rc-rb-imm",
+            "remote_reboot",
+            "immediate",
+            r#"{"mode":"immediate"}"#,
+        );
+        let r_imm = verify_and_execute_job(&mut ctx, &rb_imm).await;
+        assert_eq!(r_imm.status, "succeeded");
+        assert!(r_imm.reboot_required);
+        let marker = std::fs::read_to_string(dir.path().join("last_reboot_triggered.txt")).unwrap();
+        assert!(marker.contains("reason=remote_admin_immediate"));
     }
 }

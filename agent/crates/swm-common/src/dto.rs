@@ -69,6 +69,47 @@ fn default_scope() -> String {
     "machine".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DesktopPolicy {
+    #[serde(default = "default_true")]
+    pub enforce_tray: bool,
+    #[serde(default = "default_true")]
+    pub allow_self_service: bool,
+    #[serde(default = "default_true")]
+    pub allow_user_os_updates: bool,
+    #[serde(default)]
+    pub silent_notifications: bool,
+}
+
+impl Default for DesktopPolicy {
+    fn default() -> Self {
+        Self {
+            enforce_tray: true,
+            allow_self_service: true,
+            allow_user_os_updates: true,
+            silent_notifications: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdminDesktopMessage {
+    #[serde(default, deserialize_with = "deserialize_id")]
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub urgent: bool,
+    #[serde(default)]
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnrollRequest {
     pub enrollment_token: String,
@@ -105,6 +146,8 @@ pub struct AgentStatusResponse {
     pub excluded_updates: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_opt_string")]
     pub server_public_key_b64: Option<String>,
+    #[serde(default)]
+    pub desktop_policy: DesktopPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -172,6 +215,8 @@ pub struct InventoryReport {
     pub installed_software: Option<Vec<SoftwareEntry>>,
     #[serde(default)]
     pub pending_os_updates: Vec<PendingOsUpdate>,
+    #[serde(default)]
+    pub center_running: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

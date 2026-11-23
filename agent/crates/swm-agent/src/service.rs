@@ -6,6 +6,26 @@ pub const WINDOWS_SERVICE_NAME: &str = "NS8SoftwareManagerAgent";
 pub const WINDOWS_SERVICE_DISPLAY: &str = "NS8 Software Manager Agent";
 pub const SYSTEMD_UNIT_PATH: &str = "/etc/systemd/system/swm-agent.service";
 
+/// Builds the exact `sc.exe` argument vectors used to configure Windows SCM crash recovery
+/// (`restart/5000/restart/10000/restart/30000` + `failureflag 1`).
+pub fn windows_scm_recovery_commands(service_name: &str) -> [Vec<String>; 2] {
+    [
+        vec![
+            "failure".to_string(),
+            service_name.to_string(),
+            "reset=".to_string(),
+            "86400".to_string(),
+            "actions=".to_string(),
+            "restart/5000/restart/10000/restart/30000".to_string(),
+        ],
+        vec![
+            "failureflag".to_string(),
+            service_name.to_string(),
+            "1".to_string(),
+        ],
+    ]
+}
+
 /// Generates a clean systemd unit file content for Linux systems (`LF` line endings).
 pub fn render_systemd_unit(exe_path: &str, data_dir: &str) -> String {
     format!(
@@ -64,6 +84,18 @@ pub fn install_os_service(data_dir: &PathBuf) -> Result<()> {
     let _ = service.set_description(
         "Managed OS patching, software deployment, and privileged IPC daemon for NethServer 8 Software Manager.",
     );
+
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        for args in windows_scm_recovery_commands(WINDOWS_SERVICE_NAME) {
+            let _ = std::process::Command::new("sc.exe")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args(&args)
+                .output();
+        }
+    }
+
     Ok(())
 }
 
@@ -233,5 +265,18 @@ mod tests {
         assert!(!unit.contains("\r\n"));
         assert!(unit.contains("User=root"));
         assert!(unit.contains("ExecStart=/usr/bin/swm-agent --data-dir /etc/ns8-swm run"));
+    }
+
+    #[test]
+    fn test_windows_scm_recovery_commands_match_spec() {
+        let [failure_cmd, flag_cmd] = windows_scm_recovery_commands(WINDOWS_SERVICE_NAME);
+        assert_eq!(
+            failure_cmd.join(" "),
+            "failure NS8SoftwareManagerAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000"
+        );
+        assert_eq!(
+            flag_cmd.join(" "),
+            "failureflag NS8SoftwareManagerAgent 1"
+        );
     }
 }

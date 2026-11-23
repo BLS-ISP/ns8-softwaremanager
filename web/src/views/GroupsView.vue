@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Edit2, FolderKanban, Plus, Trash2, X } from 'lucide-vue-next'
+import { Edit2, FolderKanban, Lock, MonitorCog, Plus, Trash2, X } from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
 import type { DeviceGroup, RebootPolicy } from '@/api/types'
 import { useToast } from '@/composables/useToast'
@@ -18,6 +18,10 @@ const name = ref('')
 const description = ref('')
 const rebootPolicy = ref<RebootPolicy>('never')
 const gracePeriodMinutes = ref(240)
+const enforceTray = ref(true)
+const allowSelfService = ref(true)
+const allowUserOsUpdates = ref(true)
+const silentNotifications = ref(false)
 const saving = ref(false)
 
 const pendingDeleteGroup = ref<DeviceGroup | null>(null)
@@ -62,6 +66,10 @@ function openCreate() {
   description.value = ''
   rebootPolicy.value = 'never'
   gracePeriodMinutes.value = 240
+  enforceTray.value = true
+  allowSelfService.value = true
+  allowUserOsUpdates.value = true
+  silentNotifications.value = false
   modalOpen.value = true
 }
 
@@ -71,6 +79,10 @@ function openEdit(grp: DeviceGroup) {
   description.value = grp.description || ''
   rebootPolicy.value = grp.reboot_policy
   gracePeriodMinutes.value = grp.grace_period_minutes || 240
+  enforceTray.value = grp.enforce_tray ?? true
+  allowSelfService.value = grp.allow_self_service ?? true
+  allowUserOsUpdates.value = grp.allow_user_os_updates ?? true
+  silentNotifications.value = grp.silent_notifications ?? false
   modalOpen.value = true
 }
 
@@ -86,6 +98,10 @@ async function handleSave() {
       description: description.value.trim(),
       reboot_policy: rebootPolicy.value,
       grace_period_minutes: Number(gracePeriodMinutes.value) || 240,
+      enforce_tray: enforceTray.value,
+      allow_self_service: allowSelfService.value,
+      allow_user_os_updates: allowUserOsUpdates.value,
+      silent_notifications: silentNotifications.value,
     }
     if (editingGroup.value) {
       await adminApi.updateGroup(editingGroup.value.id, payload)
@@ -207,12 +223,42 @@ onMounted(() => {
           </p>
         </div>
 
-        <div class="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
-          <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Neustart-Richtlinie
+        <div class="mt-4 space-y-2.5 border-t border-slate-100 pt-3 dark:border-slate-800">
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              Neustart-Richtlinie
+            </div>
+            <div class="mt-1 text-xs font-semibold text-slate-800 dark:text-slate-200">
+              {{ formatRebootPolicy(grp.reboot_policy, grp.grace_period_minutes) }}
+            </div>
           </div>
-          <div class="mt-1 text-xs font-semibold text-slate-800 dark:text-slate-200">
-            {{ formatRebootPolicy(grp.reboot_policy, grp.grace_period_minutes) }}
+
+          <div class="flex flex-wrap gap-1.5 pt-0.5">
+            <span
+              v-if="grp.enforce_tray ?? true"
+              class="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+            >
+              <Lock class="h-3 w-3" aria-hidden="true" />
+              Tray geschützt
+            </span>
+            <span
+              v-if="!(grp.allow_self_service ?? true)"
+              class="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+            >
+              Managed-Kiosk-Modus
+            </span>
+            <span
+              v-else
+              class="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            >
+              Self-Service aktiv
+            </span>
+            <span
+              v-if="grp.silent_notifications"
+              class="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+            >
+              Stiller Modus
+            </span>
           </div>
         </div>
       </div>
@@ -286,6 +332,60 @@ onMounted(() => {
               max="10080"
               class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
             />
+          </div>
+
+          <div
+            class="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-950/60"
+          >
+            <div class="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <MonitorCog class="h-4 w-4 text-cyan-600 dark:text-cyan-400" aria-hidden="true" />
+              <span>Desktop-Client-Steuerung („NS8 Software Center“)</span>
+            </div>
+
+            <label class="flex cursor-pointer items-center gap-2.5 text-xs text-slate-800 dark:text-slate-200">
+              <input
+                v-model="enforceTray"
+                data-testid="group-enforce-tray"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 text-sky-600"
+              />
+              <span>Tray-Icon erzwingen &amp; Beenden sperren</span>
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2.5 text-xs text-slate-800 dark:text-slate-200">
+              <input
+                v-model="allowSelfService"
+                data-testid="group-allow-self-service"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 text-sky-600"
+              />
+              <span>
+                Self-Service-Installationen erlauben
+                <span v-if="!allowSelfService" class="ml-1 font-semibold text-amber-700 dark:text-amber-300">
+                  (Managed-Kiosk-Modus)
+                </span>
+              </span>
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2.5 text-xs text-slate-800 dark:text-slate-200">
+              <input
+                v-model="allowUserOsUpdates"
+                data-testid="group-allow-os-updates"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 text-sky-600"
+              />
+              <span>Manuelle OS-Updates durch Nutzer erlauben</span>
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2.5 text-xs text-slate-800 dark:text-slate-200">
+              <input
+                v-model="silentNotifications"
+                data-testid="group-silent-notifications"
+                type="checkbox"
+                class="h-4 w-4 rounded border-slate-300 text-sky-600"
+              />
+              <span>Stiller Modus — nur kritische Reboot-Warnungen</span>
+            </label>
           </div>
 
           <div class="flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">

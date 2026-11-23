@@ -3,6 +3,19 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.1.0] - 2026-11-23
+
+### Added
+- **Gehärteter Desktop-Client & Selbstheilung (`swm-center`, `swm-agent`, `agent/packaging/`, `server/`):**
+  - Gruppenbasierte Desktop-Client-Richtlinien (`enforce_tray`, `allow_self_service`, `allow_user_os_updates`, `silent_notifications`) mit restriktiver Auflösung bei Mehrfach-Gruppenmitgliedschaft und zerstörungsfreiem automatischem DB-Schema-Upgrade (`ensure_schema_upgrades()`) beim Serverstart.
+  - **Tray-Beenden-Sperre & Single-Instance-Guard:** Bei aktivem `enforce_tray` (Standard) entfernt `swm-center` den Menüpunkt *„Beenden“* aus dem System-Tray und ignoriert `QuitTray`-Ereignisse; ein zweiter Programmstart in derselben Benutzersitzung fokussiert über die lokale Session-Prüfung (`/api/open-window`) das bestehende Fenster statt ein zweites Tray-Icon zu öffnen.
+  - **Persistenter Session-Watchdog & Dienst-Recovery:** Windows-SCM-Crash-Recovery (`sc.exe failure` Neustart nach 5s/10s/30s) für `NS8SoftwareManagerAgent`, geplanter System-Task `\NS8SoftwareCenterGuardian` inkl. Sofortstart während `install.ps1` und automatischem Respawn durch `swm-agent` nach Task-Manager-Kills, sowie globale Linux-`systemd`-User-Unit (`/etc/systemd/user/ns8-swm-center.service`, `Restart=always`, `RestartSec=5`).
+  - **Live-Tray-Telemetrie & Kiosk-/Richtlinien-Durchsetzung:** `swm-agent` meldet `center_running` im Inventar und prüft `allow_self_service` sowie `allow_user_os_updates` strikt serverseitig an der lokalen IPC-Grenze (`PermissionDenied`).
+  - **Neuer Tab „System & Diagnose“ in `swm-center`:** Zeigt Hostname, Geräte-ID, Server-URL, WebSocket-Status, Agent-Version und aktive IT-Richtlinien inkl. *„Jetzt mit Server synchronisieren“* (`SyncNow`) und 1-Klick-*„Diagnosebericht kopieren“* für den Helpdesk.
+- **Erweiterte Echtzeit-Administrationskontrollen (`server/`, `web/`, `swm-agent`):**
+  - `Ed25519`-signierte Sofortbefehle über WebSocket für **Sofort-Sync** (`POST /api/v1/admin/devices/{id}/sync`), **Desktop-Benachrichtigungen** (`POST /api/v1/admin/devices/{id}/notify` mit nativem Toast & quittierbarem Banner im Software Center) sowie **Remote-Reboot-Steuerung** (`POST /api/v1/admin/devices/{id}/reboot` mit Karenzzeit, Sofort-Neustart oder Stornierung `cancel`).
+  - **Flotten-Mehrfachauswahl & Sammelsteuerung (`DevicesView.vue`, `DeviceDetailView.vue`, `PoliciesView.vue`):** Checkbox-Mehrfachauswahl mit schwebender Bulk-Aktionsleiste (`POST /api/v1/admin/devices/bulk-action` für Sammel-Freigabe, Sync, Update-Scan, Gruppenzuweisung & Rundnachrichten), Live-Anzeige `Software Center aktiv` sowie neue Dialoge für Desktop-Nachrichten und Neustart-Steuerung.
+
 ## [1.0.6] - 2026-11-23
 
 ### Fixed

@@ -18,7 +18,7 @@ async def test_health_endpoint(client: httpx.AsyncClient) -> None:
     data = resp.json()
     assert data == {
         "status": "ok",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "database": "connected",
     }
 

@@ -47,8 +47,24 @@ export interface RebootState {
   triggered_by_job_id: string | null;
 }
 
+export interface DesktopPolicy {
+  enforce_tray: boolean;
+  allow_self_service: boolean;
+  allow_user_os_updates: boolean;
+  silent_notifications: boolean;
+}
+
+export interface AdminDesktopMessage {
+  id: string;
+  title: string;
+  message: string;
+  urgent: boolean;
+  created_at: string;
+}
+
 export interface CenterStatusSnapshot {
   device_id: string;
+  hostname?: string;
   server_url: string;
   agent_version: string;
   connected: boolean;
@@ -57,6 +73,8 @@ export interface CenterStatusSnapshot {
   active_jobs: JobActivityEntry[];
   recent_history: JobActivityEntry[];
   reboot_state: RebootState;
+  desktop_policy?: DesktopPolicy;
+  admin_messages?: AdminDesktopMessage[];
 }
 
 interface IpcEnvelope<T> {
@@ -116,4 +134,21 @@ export async function snoozeReboot(minutes: number): Promise<RebootState> {
 
 export async function confirmRebootNow(): Promise<RebootState> {
   return callBridge<RebootState>('/api/center/confirm-reboot', { method: 'POST' });
+}
+
+export async function syncWithServer(): Promise<{
+  job_id: string;
+  status: string;
+  message: string;
+}> {
+  return callBridge('/api/sync', { method: 'POST' });
+}
+
+export async function dismissAdminMessage(
+  messageId: string
+): Promise<CenterStatusSnapshot> {
+  return callBridge<CenterStatusSnapshot>('/api/messages/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ message_id: messageId }),
+  });
 }

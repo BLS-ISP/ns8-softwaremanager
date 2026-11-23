@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { FolderKanban, RotateCcw, Save, Sparkles, UploadCloud } from 'lucide-vue-next'
+import {
+  BellOff,
+  FolderKanban,
+  Lock,
+  MonitorCog,
+  RotateCcw,
+  Save,
+  Sparkles,
+  UploadCloud,
+} from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
 import type { AgentArtifactItem, DeviceGroup, OsFamily, RebootPolicy } from '@/api/types'
 import { useToast } from '@/composables/useToast'
@@ -13,6 +22,17 @@ const toast = useToast()
 const groups = ref<DeviceGroup[]>([])
 const artifacts = ref<AgentArtifactItem[]>([])
 const loading = ref(false)
+const savingGroupId = ref<string | null>(null)
+
+function normalizeGroupPolicies(grp: DeviceGroup): DeviceGroup {
+  return {
+    ...grp,
+    enforce_tray: grp.enforce_tray ?? true,
+    allow_self_service: grp.allow_self_service ?? true,
+    allow_user_os_updates: grp.allow_user_os_updates ?? true,
+    silent_notifications: grp.silent_notifications ?? false,
+  }
+}
 
 // Agent Self-Update Form
 const agentVersion = ref('1.0.5')
@@ -48,7 +68,7 @@ async function loadGroups() {
         artifacts: [],
       })),
     ])
-    groups.value = grpList
+    groups.value = grpList.map(normalizeGroupPolicies)
     artifacts.value = artMeta.artifacts || []
     if (matchingBundledAgent.value && !agentSha256.value) {
       agentSha256.value = matchingBundledAgent.value.sha256
@@ -62,14 +82,25 @@ async function loadGroups() {
 }
 
 async function savePolicy(group: DeviceGroup) {
+  savingGroupId.value = group.id
   try {
-    await adminApi.updateGroup(group.id, {
+    const updated = await adminApi.updateGroup(group.id, {
       reboot_policy: group.reboot_policy as RebootPolicy,
       grace_period_minutes: Number(group.grace_period_minutes) || 240,
+      enforce_tray: group.enforce_tray ?? true,
+      allow_self_service: group.allow_self_service ?? true,
+      allow_user_os_updates: group.allow_user_os_updates ?? true,
+      silent_notifications: group.silent_notifications ?? false,
     })
-    toast.success('Neustart-Richtlinie gespeichert', group.name)
+    const idx = groups.value.findIndex((g) => g.id === group.id)
+    if (idx !== -1 && updated && typeof updated === 'object') {
+      groups.value[idx] = normalizeGroupPolicies({ ...group, ...updated })
+    }
+    toast.success('Gruppen-Richtlinien gespeichert', group.name)
   } catch (err) {
     toast.error('Speichern fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  } finally {
+    savingGroupId.value = null
   }
 }
 
@@ -122,29 +153,34 @@ onMounted(() => {
   <div class="space-y-8">
     <div>
       <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-        Neustart-Richtlinien &amp; Agent-Self-Update
+        Richtlinien, Desktop-Client &amp; Agent-Self-Update
       </h1>
       <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        Verhindern Sie ungeplante Server-Reboots und aktualisieren Sie den Rust-Hintergrundagenten zentral
+        Steuern Sie Neustart-Verhalten, „NS8 Software Center“-Härtung pro Gerätegruppe sowie zentrale Agent-Updates
       </p>
     </div>
 
-    <!-- Reboot Policies per Group -->
+    <!-- Reboot & Desktop Client Policies per Group -->
     <div
       class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900"
     >
-      <div class="flex items-center gap-2 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-        <RotateCcw class="h-4 w-4 text-sky-600 dark:text-sky-400" aria-hidden="true" />
-        <h2 class="text-sm font-bold text-slate-900 dark:text-slate-100">
-          Neustart-Steuerung pro Gerätegruppe
-        </h2>
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div class="flex items-center gap-2">
+          <RotateCcw class="h-4 w-4 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+          <h2 class="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Neustart- &amp; Desktop-Client-Steuerung pro Gerätegruppe
+          </h2>
+        </div>
+        <span class="text-xs text-slate-500 dark:text-slate-400">
+          Wirkt auf zugeordnete Windows- &amp; Linux-Clients bei Status-Synchronisation
+        </span>
       </div>
 
       <div v-if="groups.length === 0 && !loading" class="p-6">
         <EmptyState
           :icon="FolderKanban"
           title="Noch keine Gerätegruppen vorhanden"
-          description="Legen Sie mindestens eine Gerätegruppe an, um individuelle Neustart-Richtlinien und Benutzer-Karenzzeiten zu vergeben."
+          description="Legen Sie mindestens eine Gerätegruppe an, um individuelle Neustart-Richtlinien und Desktop-Client-Regeln zu vergeben."
         >
           <template #actions>
             <RouterLink
@@ -158,47 +194,175 @@ onMounted(() => {
         </EmptyState>
       </div>
 
-      <div v-else class="divide-y divide-slate-100 dark:divide-slate-800/70">
+      <div v-else class="divide-y divide-slate-200 dark:divide-slate-800">
         <div
           v-for="grp in groups"
           :key="grp.id"
-          class="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
+          :data-testid="`policy-group-${grp.id}`"
+          class="space-y-4 p-5 sm:p-6"
         >
-          <div>
-            <div class="text-sm font-bold text-slate-900 dark:text-slate-100">{{ grp.name }}</div>
-            <div class="text-xs text-slate-500 dark:text-slate-400">{{ grp.description || 'Gerätegruppe' }}</div>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-3">
-            <select
-              v-model="grp.reboot_policy"
-              :aria-label="`Neustart-Richtlinie für ${grp.name}`"
-              class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-            >
-              <option value="never">Kein automatischer Neustart (Server-Schutz)</option>
-              <option value="maintenance_window">Automatisch im Wartungsfenster</option>
-              <option value="grace_period">Benutzer-Karenzzeit &amp; Countdown</option>
-            </select>
-
-            <div v-if="grp.reboot_policy === 'grace_period'" class="flex items-center gap-1.5 text-xs">
-              <span class="text-slate-500 dark:text-slate-400">Deadline:</span>
-              <input
-                v-model.number="grp.grace_period_minutes"
-                type="number"
-                min="15"
-                class="w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950"
-              />
-              <span class="text-slate-500 dark:text-slate-400">Min.</span>
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-bold text-slate-900 dark:text-slate-100">{{ grp.name }}</span>
+                <span
+                  v-if="grp.enforce_tray"
+                  class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30"
+                >
+                  <Lock class="h-3 w-3" aria-hidden="true" />
+                  Tray geschützt
+                </span>
+                <span
+                  v-if="!grp.allow_self_service"
+                  class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-600/25 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/30"
+                >
+                  Managed-Kiosk-Modus
+                </span>
+                <span
+                  v-if="grp.silent_notifications"
+                  class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-500/20 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600/40"
+                >
+                  <BellOff class="h-3 w-3" aria-hidden="true" />
+                  Stiller Modus
+                </span>
+              </div>
+              <div class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                {{ grp.description || 'Gerätegruppe' }}
+                <span v-if="grp.device_count !== undefined"> · {{ grp.device_count }} Geräte</span>
+              </div>
             </div>
 
-            <button
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-sky-600 dark:hover:bg-sky-500"
-              @click="savePolicy(grp)"
-            >
-              <Save class="h-3.5 w-3.5" aria-hidden="true" />
-              Speichern
-            </button>
+            <div class="flex flex-wrap items-center gap-3">
+              <select
+                v-model="grp.reboot_policy"
+                :aria-label="`Neustart-Richtlinie für ${grp.name}`"
+                class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+              >
+                <option value="never">Kein automatischer Neustart (Server-Schutz)</option>
+                <option value="maintenance_window">Automatisch im Wartungsfenster</option>
+                <option value="grace_period">Benutzer-Karenzzeit &amp; Countdown</option>
+              </select>
+
+              <div v-if="grp.reboot_policy === 'grace_period'" class="flex items-center gap-1.5 text-xs">
+                <span class="text-slate-500 dark:text-slate-400">Deadline:</span>
+                <input
+                  v-model.number="grp.grace_period_minutes"
+                  type="number"
+                  min="15"
+                  class="w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950"
+                />
+                <span class="text-slate-500 dark:text-slate-400">Min.</span>
+              </div>
+
+              <button
+                type="button"
+                :data-testid="`save-policy-${grp.id}`"
+                :disabled="savingGroupId === grp.id"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-sky-600 dark:hover:bg-sky-500"
+                @click="savePolicy(grp)"
+              >
+                <Save class="h-3.5 w-3.5" aria-hidden="true" />
+                {{ savingGroupId === grp.id ? 'Speichere…' : 'Speichern' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Desktop-Client-Steuerung („NS8 Software Center“) -->
+          <div
+            class="rounded-xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/60"
+          >
+            <div class="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <MonitorCog class="h-4 w-4 text-cyan-600 dark:text-cyan-400" aria-hidden="true" />
+              <span>Desktop-Client-Steuerung („NS8 Software Center“)</span>
+            </div>
+
+            <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+              <label
+                class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 transition hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500/40"
+              >
+                <input
+                  v-model="grp.enforce_tray"
+                  :data-testid="`policy-enforce-tray-${grp.id}`"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                />
+                <span class="min-w-0">
+                  <span class="block text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Tray-Icon erzwingen &amp; Beenden sperren
+                  </span>
+                  <span class="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                    Deaktiviert „Beenden“ im System-Tray und hält den Client per Session-Watchdog aktiv
+                  </span>
+                </span>
+              </label>
+
+              <label
+                class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 transition hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500/40"
+              >
+                <input
+                  v-model="grp.allow_self_service"
+                  :data-testid="`policy-allow-self-service-${grp.id}`"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                />
+                <span class="min-w-0">
+                  <span class="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    <span>Self-Service-Installationen erlauben</span>
+                    <span
+                      v-if="!grp.allow_self_service"
+                      class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+                    >
+                      Managed-Kiosk-Modus
+                    </span>
+                  </span>
+                  <span class="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                    {{
+                      grp.allow_self_service
+                        ? 'Benutzer dürfen freigegebene Katalog-Apps selbstständig installieren'
+                        : 'Managed-Kiosk-Modus aktiv — nur zentrale Pflicht-Rollouts durch IT erlaubt'
+                    }}
+                  </span>
+                </span>
+              </label>
+
+              <label
+                class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 transition hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500/40"
+              >
+                <input
+                  v-model="grp.allow_user_os_updates"
+                  :data-testid="`policy-allow-os-updates-${grp.id}`"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                />
+                <span class="min-w-0">
+                  <span class="block text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Manuelle OS-Updates durch Nutzer erlauben
+                  </span>
+                  <span class="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                    Erlaubt Endbenutzern, ausstehende System-Patches vor dem Wartungsfenster anzustoßen
+                  </span>
+                </span>
+              </label>
+
+              <label
+                class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 transition hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500/40"
+              >
+                <input
+                  v-model="grp.silent_notifications"
+                  :data-testid="`policy-silent-notifications-${grp.id}`"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 dark:border-slate-600 dark:bg-slate-950"
+                />
+                <span class="min-w-0">
+                  <span class="block text-xs font-semibold text-slate-900 dark:text-slate-100">
+                    Stiller Modus — nur kritische Reboot-Warnungen
+                  </span>
+                  <span class="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                    Unterdrückt Standard-Popups und zeigt nur dringende Admin-Hinweise &amp; Reboot-Deadlines
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
       </div>

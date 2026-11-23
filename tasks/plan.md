@@ -181,3 +181,17 @@ Sofern du keine Änderung wünschst, geht dieser Plan von folgenden Standard-Ent
 1. **Tech-Stack:** Python `FastAPI` + `PostgreSQL` für den NS8-Server, `Vue 3` für das Admin-Web-Portal, `Rust` für den `swm-agent` und `Tauri v2 + Vue 3` für das lokale Desktop-Software-Center (`swm-center`).
 2. **Linux-Familien zum Start:** `Debian/Ubuntu/Mint (apt)` + `RHEL/Rocky/Alma/Fedora (dnf)` + `Flatpak` (Modularer Trait-Aufbau im Agenten erlaubt später leichtes Nachrüsten von `zypper`/`pacman`).
 3. **Zuweisungs-Ebene in v1:** Zuweisung von Paketen und Update-Richtlinien an **Geräte & Gerätegruppen** (mit vorbereitetem DB-Schema für spätere AD-Benutzergruppen-Filterung).
+
+
+---
+
+# Erweiterungsplan Phase 7 (v1.1.0): Gehärteter Desktop-Client & Erweiterte Admin-Kontrollen
+
+## Überblick
+Diese Erweiterung schließt alle Manipulationslücken der Endbenutzer-App (`swm-center`) im verwalteten Unternehmensbetrieb (Entfernen der Beenden-Möglichkeit, Single-Instance-Sperre, automatischer Watchdog-Respawn bei Task-Manager-Kill, Sofortstart ohne Neuanmeldung sowie Windows-SCM-Crash-Recovery) und gibt Administratoren leistungsstarke Echtzeit-Werkzeuge an die Hand (Gruppenrichtlinien für den Desktop-Client, signierte 1-Klick-Fernbefehle für Live-Sync, Toast-Benutzerhinweise & Reboot-Steuerung, Bulk-Flottenaktionen sowie ein integriertes Helpdesk-Diagnosepanel im Client).
+
+## Architekturentscheidungen (Phase 7)
+- **Serverseitig erzwungene Desktop-Richtlinien statt reiner UI-Ausblendung:** Flags wie `enforce_tray`, `allow_self_service` und `allow_user_os_updates` werden nicht nur in der Vue-UI des `swm-center` ausgewertet, sondern direkt im privilegierten IPC-Handler von `swm-agent` geprüft (`PermissionDenied`, falls Self-Service für die Gruppe deaktiviert ist).
+- **Zweistufiger Session-Keep-Alive (OS-Task + Agent-Guardian):** Unter Windows kombiniert die Lösung einen systemweiten geplanten Task (`\NS8SoftwareCenterGuardian` für `S-1-5-32-545`, `MultipleInstances=IgnoreNew`) mit einer periodischen Prozessprüfung im `swm-agent`, die den Task bei beendetem `swm-center.exe` in aktiven Benutzersitzungen automatisch neu anstößt. Unter Linux übernimmt eine globale `systemd`-User-Unit (`/etc/systemd/user/ns8-swm-center.service`) mit `Restart=always` (`RestartSec=5`) den automatischen Neustart.
+- **Unterbrechungsfreie Live-Datenbankmigration (`ensure_schema_upgrades`):** Da produktive NS8-Instanzen bestehende PostgreSQL-Volumes nutzen, prüft der Server beim Start fehlende Spalten per SQLAlchemy-Inspektor und ergänzt sie idempotent (`ALTER TABLE ... ADD COLUMN`), ohne bestehende Daten zu gefährden.
+- **Kryptografisch signierte Fernbefehle:** Alle neuen Sofortaktionen (`force_sync`, `admin_notify`, `remote_reboot`) nutzen dieselbe kanonische `Ed25519`-Job-Signatur (`SignedJob`) wie Software- und Patch-Aufträge — der Agent führt keinen unautorisierten Befehl aus.

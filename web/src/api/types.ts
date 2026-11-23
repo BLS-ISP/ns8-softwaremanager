@@ -131,6 +131,7 @@ export interface Device {
   status: DeviceStatus
   is_online: boolean
   reboot_required: boolean
+  center_running?: boolean
   ip_addresses: string[]
   logged_in_users: string[]
   group_ids: string[]
@@ -164,6 +165,10 @@ export interface DeviceGroup {
   description?: string | null
   reboot_policy: RebootPolicy
   grace_period_minutes: number
+  enforce_tray?: boolean
+  allow_self_service?: boolean
+  allow_user_os_updates?: boolean
+  silent_notifications?: boolean
   device_count?: number
   created_at?: string
 }
@@ -173,6 +178,39 @@ export interface GroupCreatePayload {
   description?: string
   reboot_policy: RebootPolicy
   grace_period_minutes: number
+  enforce_tray?: boolean
+  allow_self_service?: boolean
+  allow_user_os_updates?: boolean
+  silent_notifications?: boolean
+}
+
+export interface DeviceNotifyPayload {
+  title: string
+  message: string
+  urgent: boolean
+}
+
+export type DeviceRebootMode = 'grace_period' | 'immediate' | 'cancel'
+
+export interface DeviceRebootPayload {
+  mode: DeviceRebootMode
+  grace_minutes?: number
+}
+
+export type BulkDeviceActionType = 'approve' | 'sync' | 'scan_updates' | 'assign_group' | 'notify'
+
+export interface BulkDeviceActionPayload {
+  device_ids: string[]
+  action: BulkDeviceActionType
+  group_id?: string | null
+  title?: string
+  message?: string
+  urgent?: boolean
+}
+
+export interface BulkDeviceActionResponse {
+  affected: number
+  job_ids: string[]
 }
 
 export interface MaintenanceWindow {

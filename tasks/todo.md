@@ -639,3 +639,180 @@ Diese Datei ist das zentrale Task-Tracking-Dokument gemäß `tasks/plan.md`. Jed
 - [x] Alle Backend-Tests (`pytest`), Rust-Workspace-Tests (`cargo test`), Admin-UI-Builds (`web/`) und NS8-Cockpit-UI-Builds (`ui/`) laufen fehlerfrei
 - [x] Alle 8 NS8-Architekturregeln und 3 NS8-UI-Regeln sind automatisiert verifiziert
 - [x] Bereit für Deployment und Test auf einem NethServer-8-Cluster (`add-module`)
+
+
+---
+
+## Phase 7: Gehärteter Desktop-Client (`swm-center`) & Erweiterte Admin-Kontrollen
+
+## Task 23: Gruppenbasierte Desktop-Client-Richtlinien & Live-DB-Schema-Upgrade
+
+**Description:** Erweitert Gerätegruppen um zentrale Steuerungsrichtlinien für den Desktop-Client (`enforce_tray`, `allow_self_service`, `allow_user_os_updates`, `silent_notifications`), rüstet eine automatische, zerstörungsfreie Spalten-Migration beim Serverstart für bestehende PostgreSQL-/SQLite-Instanzen nach und liefert die effektiven Richtlinien an `swm-agent` und `swm-center` aus.
+
+**Acceptance criteria:**
+- [x] Bestehende PostgreSQL- und SQLite-Datenbanken erhalten neue Spalten auf `groups` und `devices` (`center_running`) beim Start idempotent per `ensure_schema_upgrades()` ohne Datenverlust.
+- [x] `GET /api/v1/agent/status` liefert die effektive `desktop_policy` der Gerätegruppen (`enforce_tray` gewinnt restriktiv, `allow_self_service` / `allow_user_os_updates` konfigurierbar).
+- [x] `PoliciesView.vue` erlaubt das komfortable Speichern der Desktop-Client-Richtlinien pro Gerätegruppe.
+
+**Verification:**
+- [x] Tests pass: `python -m pytest server/tests/test_desktop_hardening_and_controls.py`
+- [x] Build succeeds: `npm --prefix web run build`
+- [x] Manual check: Ändern einer Gruppenrichtlinie in `PoliciesView.vue` aktualisiert sofort das `/api/v1/agent/status`-Payload.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `server/app/models.py`
+- `server/app/db.py`
+- `server/app/schemas.py`
+- `server/app/api/agent_api.py`
+- `web/src/views/PoliciesView.vue`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 24: `swm-center` Härtung (Tray-Beenden-Sperre, Single-Instance-Lock & Live-Sync)
+
+**Description:** Härtet den Rust-Desktop-Client `swm-center`: Entfernt/blockiert im verwalteten Modus (`enforce_tray = true`) das Beenden über das System-Tray-Menü, verhindert doppelte Tray-Prozesse durch eine Single-Instance-Session-Koordination (erneuter Start öffnet das bestehende Fenster statt einer zweiten Instanz) und ergänzt den IPC-Befehl `SyncNow` im Tray-Menü.
+
+**Acceptance criteria:**
+- [x] Bei `enforce_tray = true` enthält das Tray-Kontextmenü keinen „Beenden“-Eintrag (`IDM_QUIT`), und ein `QuitTray`-Action-Event beendet den Prozess nicht.
+- [x] Wird `swm-center gui` ein zweites Mal in derselben Benutzersitzung aufgerufen (z. B. über Startmenü oder Watchdog), erkennt es die laufende Instanz über die lokale Session-Datei/Port-Prüfung, öffnet bei nicht-gesetztem `--tray-only` das bestehende UI-Fenster und beendet den Zweitprozess sauber mit Exit `0`.
+- [x] Neuer IPC-Request `IpcRequest::SyncNow` löst im `swm-agent` sofort einen Synchronisationszyklus mit dem NS8-Server aus.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-center -p swm-common`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml --workspace`
+- [x] Manual check: Zweiter Aufruf von `swm-center gui` erzeugt kein zweites Tray-Icon.
+
+**Dependencies:** Task 23
+
+**Files likely touched:**
+- `agent/crates/swm-common/src/dto.rs`
+- `agent/crates/swm-common/src/ipc.rs`
+- `agent/crates/swm-center/src/tray.rs`
+- `agent/crates/swm-center/src/main.rs`
+- `agent/crates/swm-agent/src/ipc/mod.rs`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 25: Persistenter Session-Watchdog, Sofortstart & Dienst-Selbstheilung (Windows & Linux)
+
+**Description:** Stellt sicher, dass weder `swm-agent` noch `swm-center` dauerhaft ausfallen oder vom Benutzer abgeschossen bleiben: Konfiguriert Windows-SCM-Crash-Recovery für `NS8SoftwareManagerAgent`, richtet unter Windows den geplanten System-Task `\NS8SoftwareCenterGuardian` inkl. Sofortstart während `install.ps1` und Watchdog-Prüfung durch `swm-agent` ein, installiert unter Linux eine globale `systemd`-User-Unit mit `Restart=always` und meldet `center_running` im Inventar.
+
+**Acceptance criteria:**
+- [x] `service-install` und `install.ps1` konfigurieren Windows-Service-Recovery (`restart/5000/restart/10000/restart/30000`) für `NS8SoftwareManagerAgent`.
+- [x] `install.ps1` (`headless=0`) registriert und startet `\NS8SoftwareCenterGuardian` sofort in aktiven Benutzersitzungen; beendet ein Nutzer `swm-center.exe` im Task-Manager, startet der Agent-Watchdog den Task bei `enforce_tray = true` automatisch neu.
+- [x] `install.sh` (`headless=0`) und `nfpm.yaml` richten `/etc/systemd/user/ns8-swm-center.service` mit `Restart=always` und `RestartSec=5` ein; `InventoryReport` überträgt `center_running: bool`.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-agent` und `python -m pytest server/tests/test_scheduler_and_autostart.py`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml --workspace`
+- [x] Manual check: PowerShell-AST-Parser-Test für `install.ps1` und Bash-Syntaxprüfung für `install.sh` laufen fehlerfrei.
+
+**Dependencies:** Task 24
+
+**Files likely touched:**
+- `agent/crates/swm-agent/src/service.rs`
+- `agent/crates/swm-agent/src/daemon.rs`
+- `agent/crates/swm-agent/src/inventory/system.rs`
+- `server/app/api/health_and_dl.py`
+- `agent/packaging/nfpm.yaml`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Checkpoint: Nach Tasks 23–25 (Client-Härtung komplett)
+- [x] `cargo test --workspace` und `pytest` laufen vollständig grün
+- [x] `swm-center` lässt sich bei aktivem `enforce_tray` nicht über das Tray beenden und wird nach Prozess-Kill automatisch neu gestartet
+- [x] Bestehende Datenbanken migrieren beim Start automatisch ohne Fehler
+
+---
+
+## Task 26: Signierte Admin-Sofortbefehle (`force_sync`, `admin_notify`, `remote_reboot`)
+
+**Description:** Erweitert Server und `swm-agent` um drei signierte Echtzeit-Steuerungsbefehle für Administratoren: sofortiger Inventar-/Katalog-Sync (`force_sync`), direkte Desktop-Benachrichtigungen an angemeldete Benutzer (`admin_notify` mit Titel, Nachricht & Dringlichkeit) sowie gesteuerte Remote-Reboots (`grace_period`, `immediate` oder `cancel`).
+
+**Acceptance criteria:**
+- [x] Server-Endpunkte `POST /api/v1/admin/devices/{id}/sync`, `/notify`, `/reboot` sowie Bulk-Endpunkt `POST /api/v1/admin/devices/bulk-action` erzeugen `Ed25519`-signierte Sofortjobs und pushen sie unmittelbar über den aktiven WebSocket.
+- [x] `swm-agent` verifiziert die `Ed25519`-Signatur jedes Steuerungsjobs; bei `admin_notify` speichert er die Nachricht für `swm-center`, welches sofort ein natives Toast-Popup (WinRT / `notify-send`) und ein Hinweisbanner anzeigt.
+- [x] `remote_reboot` erlaubt sowohl das Setzen einer Karenzzeit-Deadline als auch das Stornieren (`cancel`) eines ausstehenden Agent-Reboots.
+
+**Verification:**
+- [x] Tests pass: `python -m pytest server/tests/test_desktop_hardening_and_controls.py` und `cargo test --manifest-path agent/Cargo.toml -p swm-agent`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml --workspace`
+- [x] Manual check: Auslösen von `admin_notify` über die API erzeugt ein verifiziertes Benachrichtigungs-Event im `CenterStatusSnapshot`.
+
+**Dependencies:** Task 25
+
+**Files likely touched:**
+- `server/app/api/admin_devices.py`
+- `agent/crates/swm-agent/src/jobs/runner.rs`
+- `agent/crates/swm-center/src/tray.rs`
+- `server/tests/test_desktop_hardening_and_controls.py`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 27: Flotten-Mehrfachauswahl & Remote-Action-Leiste in der Admin-Konsole (`web/`)
+
+**Description:** Baut die neuen Administrator-Werkzeuge übersichtlich in `DevicesView.vue` und `DeviceDetailView.vue` ein: Mehrfachauswahl-Toolbar (Bulk-Freigabe, Bulk-Sync, Bulk-Update-Scan, Gruppen-Zuweisung, Rundnachricht an ausgewählte PCs), Live-Anzeige des Tray-Status (`Software Center aktiv`) sowie 1-Klick-Dialoge für Benutzer-Nachrichten und Neustart-Steuerung.
+
+**Acceptance criteria:**
+- [x] In `DevicesView.vue` lassen sich mehrere Geräte per Checkbox auswählen und gesammelt synchronisieren, freigeben, scannen oder mit einer Desktop-Benachrichtigung versehen.
+- [x] `DeviceDetailView.vue` zeigt den Live-Status von `swm-center` (`Tray aktiv` / `Keine Benutzersitzung`) sowie Direkt-Buttons für *Jetzt synchronisieren*, *Nachricht senden* und *Neustart steuern*.
+- [x] Alle neuen Modals und Aktionen funktionieren barrierefrei im Light- und Dark-Mode.
+
+**Verification:**
+- [x] Tests pass: `npm --prefix web test -- --run`
+- [x] Build succeeds: `npm --prefix web run build`
+- [x] Manual check: Visuelle Prüfung von Bulk-Leiste, Nachrichten-Modal und Gerätedetails.
+
+**Dependencies:** Task 26
+
+**Files likely touched:**
+- `web/src/api/types.ts`
+- `web/src/api/client.ts`
+- `web/src/views/DevicesView.vue`
+- `web/src/views/DeviceDetailView.vue`
+- `web/tests/dashboard-and-devices.spec.ts`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 28: „System & Diagnose“-Tab + Kiosk-/Richtlinien-Durchsetzung in `swm-center` UI
+
+**Description:** Erweitert die eingebettete Vue-3-Oberfläche des Desktop-Clients (`swm-center/ui`) um ein prominentes Admin-Mitteilungsbanner, die strikte Beachtung von `allow_self_service` / `allow_user_os_updates` (inkl. serverseitiger IPC-Sperre in `swm-agent`) sowie einen neuen Tab **„System & Diagnose“** für schnellen Helpdesk-Support.
+
+**Acceptance criteria:**
+- [x] Ist `allow_self_service = false`, lehnt `swm-agent` `TriggerPackage` über IPC mit `PermissionDenied` ab und `swm-center` zeigt einen klaren Hinweis (*„Durch IT-Richtlinie zentral verwaltet“*).
+- [x] Neuer Tab **„System & Diagnose“** in `swm-center` zeigt Hostname, Geräte-ID, Server-URL, WebSocket-Status, Agent-Version, aktive Gruppenrichtlinien sowie Buttons für *„Jetzt mit Server synchronisieren“* und *„Diagnosebericht kopieren“*.
+- [x] Vom Administrator gesendete Nachrichten (`admin_notify`) erscheinen prominent und quittierbar am oberen Rand des Software Centers.
+
+**Verification:**
+- [x] Tests pass: `npm --prefix agent/crates/swm-center/ui test -- --run` und `cargo test --manifest-path agent/Cargo.toml --workspace`
+- [x] Build succeeds: `npm --prefix agent/crates/swm-center/ui run build && cargo build --manifest-path agent/Cargo.toml -p swm-center`
+- [x] Manual check: Alle Backend-, Web-, Cockpit- und Rust-Tests laufen grün; Release-Bereitschaft geprüft.
+
+**Dependencies:** Task 24, Task 26
+
+**Files likely touched:**
+- `agent/crates/swm-agent/src/ipc/mod.rs`
+- `agent/crates/swm-center/src/bridge.rs`
+- `agent/crates/swm-center/ui/src/App.vue`
+- `agent/crates/swm-center/ui/src/__tests__/app.spec.ts`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Finaler Checkpoint: Abschluss Phase 7
+- [x] Alle 6 Aufgaben (Tasks 23–28) erfüllt und abgehakt
+- [x] `pytest`, `vitest` (`web` & `swm-center/ui`) und `cargo test --workspace` laufen zu 100 % grün
+- [x] Bereit für Release `v1.1.0` auf GitHub/GHCR und `ns8-nethforge`

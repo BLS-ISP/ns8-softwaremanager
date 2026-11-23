@@ -30,6 +30,7 @@ class Device(Base):
     )  # pending | approved | revoked
     is_online: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reboot_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    center_running: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hardware: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     ip_addresses: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     logged_in_users: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

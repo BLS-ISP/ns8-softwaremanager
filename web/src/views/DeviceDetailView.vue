@@ -7,16 +7,29 @@ import {
   CheckCircle,
   Cpu,
   HardDrive,
+  MessageSquareShare,
+  MonitorCheck,
+  MonitorOff,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Terminal,
   Trash2,
+  Zap,
 } from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
-import type { Device, DeviceGroup, JobItem } from '@/api/types'
+import type {
+  Device,
+  DeviceGroup,
+  DeviceNotifyPayload,
+  DeviceRebootPayload,
+  JobItem,
+} from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import DeviceNotifyModal from '@/components/DeviceNotifyModal.vue'
+import DeviceRebootModal from '@/components/DeviceRebootModal.vue'
 import JobLogModal from '@/components/JobLogModal.vue'
 import OsBadge from '@/components/OsBadge.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -40,6 +53,12 @@ const selectedJobInitial = ref<JobItem | null>(null)
 
 const confirmAction = ref<'revoke' | 'delete' | null>(null)
 const confirmBusy = ref(false)
+
+const notifyModalOpen = ref(false)
+const notifyBusy = ref(false)
+const rebootModalOpen = ref(false)
+const rebootBusy = ref(false)
+const syncBusy = ref(false)
 
 const filteredSoftware = computed(() => {
   const list = device.value?.installed_software || []
@@ -115,6 +134,65 @@ async function handleScan() {
   }
 }
 
+async function handleSync() {
+  if (!device.value || syncBusy.value) return
+  syncBusy.value = true
+  try {
+    await adminApi.syncDevice(device.value.id)
+    toast.success(
+      'Sofort-Synchronisation ausgelöst',
+      `${device.value.hostname} gleicht Inventar, Katalog und Richtlinien ab.`,
+    )
+    await loadDevice()
+  } catch (err) {
+    toast.error('Synchronisation fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  } finally {
+    syncBusy.value = false
+  }
+}
+
+async function handleNotifySubmit(payload: DeviceNotifyPayload) {
+  if (!device.value || notifyBusy.value) return
+  notifyBusy.value = true
+  try {
+    await adminApi.notifyDevice(device.value.id, payload)
+    notifyModalOpen.value = false
+    toast.success(
+      'Desktop-Nachricht gesendet',
+      `Mitteilung „${payload.title}“ an ${device.value.hostname} übermittelt.`,
+    )
+    await loadDevice()
+  } catch (err) {
+    toast.error('Nachricht fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  } finally {
+    notifyBusy.value = false
+  }
+}
+
+async function handleRebootSubmit(payload: DeviceRebootPayload) {
+  if (!device.value || rebootBusy.value) return
+  rebootBusy.value = true
+  try {
+    await adminApi.rebootDevice(device.value.id, payload)
+    rebootModalOpen.value = false
+    if (payload.mode === 'cancel') {
+      toast.success('Neustart abgebrochen', `Ausstehende Deadline auf ${device.value.hostname} aufgehoben.`)
+    } else if (payload.mode === 'immediate') {
+      toast.warning('Sofortiger Neustart gesendet', `${device.value.hostname} startet umgehend neu.`)
+    } else {
+      toast.success(
+        'Neustart-Countdown gestartet',
+        `Karenzzeit (${payload.grace_minutes ?? 60} Min.) auf ${device.value.hostname} aktiviert.`,
+      )
+    }
+    await loadDevice()
+  } catch (err) {
+    toast.error('Neustart-Steuerung fehlgeschlagen', err instanceof Error ? err.message : undefined)
+  } finally {
+    rebootBusy.value = false
+  }
+}
+
 async function executeConfirmedAction() {
   if (!device.value || !confirmAction.value) return
   confirmBusy.value = true
@@ -162,14 +240,31 @@ onMounted(() => {
     <template v-if="device">
       <!-- Top Summary Header -->
       <div
-        class="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-xs lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900"
+        class="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-xs xl:flex-row xl:items-center dark:border-slate-800 dark:bg-slate-900"
       >
-        <div class="space-y-2">
+        <div class="space-y-2.5">
           <div class="flex flex-wrap items-center gap-2.5">
             <h1 class="text-2xl font-bold text-slate-900 dark:text-slate-50">{{ device.hostname }}</h1>
             <StatusBadge :variant="device.is_online ? 'online' : 'offline'" />
             <StatusBadge :variant="device.status" />
             <StatusBadge v-if="device.reboot_required" variant="reboot" />
+            <span
+              data-testid="device-center-status"
+              class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+              :class="
+                device.center_running
+                  ? 'bg-cyan-50 text-cyan-800 ring-cyan-600/20 dark:bg-cyan-500/15 dark:text-cyan-300 dark:ring-cyan-400/30'
+                  : 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600/40'
+              "
+            >
+              <MonitorCheck v-if="device.center_running" class="h-3.5 w-3.5" aria-hidden="true" />
+              <MonitorOff v-else class="h-3.5 w-3.5" aria-hidden="true" />
+              {{
+                device.center_running
+                  ? 'Software Center: Aktiv in Benutzersitzung'
+                  : 'Kein aktives Tray / Headless'
+              }}
+            </span>
           </div>
           <div class="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
             <OsBadge
@@ -194,6 +289,19 @@ onMounted(() => {
             <CheckCircle class="h-4 w-4" aria-hidden="true" />
             Freigeben
           </button>
+
+          <button
+            v-if="device.status === 'approved'"
+            type="button"
+            data-testid="device-sync-btn"
+            :disabled="syncBusy"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+            @click="handleSync"
+          >
+            <Zap class="h-4 w-4 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+            Jetzt synchronisieren
+          </button>
+
           <button
             v-if="device.status === 'approved'"
             type="button"
@@ -203,6 +311,29 @@ onMounted(() => {
             <RefreshCw class="h-4 w-4" aria-hidden="true" />
             Update-Scan auslösen
           </button>
+
+          <button
+            v-if="device.status === 'approved'"
+            type="button"
+            data-testid="device-notify-btn"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-300 dark:hover:bg-sky-500/25"
+            @click="notifyModalOpen = true"
+          >
+            <MessageSquareShare class="h-4 w-4" aria-hidden="true" />
+            Nachricht senden
+          </button>
+
+          <button
+            v-if="device.status === 'approved'"
+            type="button"
+            data-testid="device-reboot-btn"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+            @click="rebootModalOpen = true"
+          >
+            <RotateCcw class="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+            Neustart steuern
+          </button>
+
           <button
             v-if="device.status === 'approved'"
             type="button"
@@ -525,6 +656,23 @@ onMounted(() => {
         </div>
       </div>
     </template>
+
+    <DeviceNotifyModal
+      :open="notifyModalOpen"
+      :target-label="device?.hostname || ''"
+      :loading="notifyBusy"
+      @cancel="notifyModalOpen = false"
+      @submit="handleNotifySubmit"
+    />
+
+    <DeviceRebootModal
+      :open="rebootModalOpen"
+      :hostname="device?.hostname || ''"
+      :reboot-required="Boolean(device?.reboot_required)"
+      :loading="rebootBusy"
+      @cancel="rebootModalOpen = false"
+      @submit="handleRebootSubmit"
+    />
 
     <JobLogModal
       :open="Boolean(selectedJobId)"

@@ -339,6 +339,114 @@ input:focus-visible {
   gap: 12px;
 }
 
+.admin-msg-banner {
+  background: var(--info-soft-bg);
+  border-bottom: 1px solid var(--info-soft-border);
+  color: var(--info-soft-fg);
+  padding: 13px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-msg-banner.urgent {
+  background: var(--warning-soft-bg);
+  border-bottom-color: var(--warning-soft-border);
+  color: var(--warning-soft-fg);
+}
+
+.admin-msg-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-msg-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+}
+
+.admin-msg-body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.policy-info-banner {
+  background: var(--info-soft-bg);
+  border: 1px solid var(--info-soft-border);
+  color: var(--info-soft-fg);
+  border-radius: 11px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+}
+
+.diag-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.diag-kv-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.diag-kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13.5px;
+}
+
+.diag-kv-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.diag-kv-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.diag-kv-val {
+  color: var(--text-main);
+  font-size: 13.5px;
+}
+
+.diag-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  word-break: break-all;
+}
+
 .content-container {
   padding: 26px;
   max-width: 1280px;

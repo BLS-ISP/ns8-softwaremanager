@@ -89,9 +89,27 @@ Terminal=false
 Categories=System;PackageManager;
 EOF
         chmod 0644 /usr/share/applications/swm-center.desktop
+        install -d -m 0755 /etc/systemd/user /etc/systemd/user/default.target.wants
+        cat >/etc/systemd/user/ns8-swm-center.service <<'EOF'
+[Unit]
+Description=NS8 Software Center Desktop Tray & Self-Service Agent Bridge
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/swm-center gui --tray-only
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+        chmod 0644 /etc/systemd/user/ns8-swm-center.service
+        ln -sf /etc/systemd/user/ns8-swm-center.service /etc/systemd/user/default.target.wants/ns8-swm-center.service
     fi
 else
-    rm -f /etc/xdg/autostart/swm-center.desktop
+    rm -f /etc/xdg/autostart/swm-center.desktop /usr/share/applications/swm-center.desktop
+    rm -f /etc/systemd/user/default.target.wants/ns8-swm-center.service /etc/systemd/user/ns8-swm-center.service
 fi
 
 echo "[NS8-SWM] Enrolling endpoint..."

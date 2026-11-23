@@ -11,12 +11,24 @@
       <button
         type="button"
         class="btn btn-primary"
-        :disabled="busy || (osUpdates.length === 0 && appUpdates.length === 0)"
+        :disabled="!allowUserOsUpdates || busy || (osUpdates.length === 0 && appUpdates.length === 0)"
         data-testid="install-all-updates-btn"
         @click="$emit('trigger-all')"
       >
         {{ busy ? 'Wird installiert…' : 'Jetzt installieren' }}
       </button>
+    </div>
+
+    <div
+      v-if="!allowUserOsUpdates"
+      class="policy-info-banner"
+      role="status"
+      data-testid="os-updates-policy-banner"
+    >
+      <span>
+        <strong>Durch IT-Richtlinie verwalteter Modus — Installationen werden zentral gesteuert.</strong>
+        Manuelle Betriebssystem-Updates sind deaktiviert und werden automatisch im geplanten Wartungsfenster ausgerollt.
+      </span>
     </div>
 
     <div v-if="busy" class="active-job-card" role="status" aria-live="polite" style="margin-bottom: 18px;">
@@ -94,7 +106,7 @@
           <button
             type="button"
             class="btn btn-primary"
-            :disabled="busy"
+            :disabled="!allowUserOsUpdates || !allowSelfService || busy"
             @click="$emit('trigger-app', app.package_id)"
           >
             Jetzt installieren
@@ -108,11 +120,19 @@
 <script setup lang="ts">
 import type { CatalogViewItem, PendingOsUpdate } from '../api';
 
-defineProps<{
-  osUpdates: PendingOsUpdate[];
-  appUpdates: CatalogViewItem[];
-  busy?: boolean;
-}>();
+withDefaults(
+  defineProps<{
+    osUpdates: PendingOsUpdate[];
+    appUpdates: CatalogViewItem[];
+    busy?: boolean;
+    allowUserOsUpdates?: boolean;
+    allowSelfService?: boolean;
+  }>(),
+  {
+    allowUserOsUpdates: true,
+    allowSelfService: true,
+  }
+);
 
 defineEmits<{
   (e: 'trigger-all'): void;

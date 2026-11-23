@@ -22,6 +22,7 @@ pub fn build_inventory_report(
     let sys = system::collect_system_snapshot();
     let os_reboot = reboot::detect_os_pending_reboot();
     let reboot_required = os_reboot || extra_reboot_required;
+    let center_running = system::detect_swm_center_running();
 
     let software = software::collect_installed_software();
     let software_hash = software::compute_software_delta_hash(&software);
@@ -53,6 +54,7 @@ pub fn build_inventory_report(
         software_hash: Some(software_hash.clone()),
         installed_software,
         pending_os_updates,
+        center_running,
     };
 
     CollectedInventory {

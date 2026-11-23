@@ -21,7 +21,7 @@ from app.models import (
     new_uuid,
     utc_now,
 )
-from app.schemas import SignedCatalogItemOut, SignedJobOut
+from app.schemas import DesktopPolicyOut, SignedCatalogItemOut, SignedJobOut
 from app.services.ws_hub import WebSocketHub
 
 ACTIVE_JOB_STATUSES = ("queued", "dispatched", "running", "waiting_for_process")
@@ -182,6 +182,22 @@ def resolve_device_reboot_policy(device: Device) -> tuple[str, int]:
     if "maintenance_window" in policies:
         return "maintenance_window", min(g.grace_period_minutes for g in device.groups)
     return "grace_period", min(g.grace_period_minutes for g in device.groups)
+
+
+def resolve_device_desktop_policy(device: Device) -> DesktopPolicyOut:
+    if not device.groups:
+        return DesktopPolicyOut(
+            enforce_tray=True,
+            allow_self_service=True,
+            allow_user_os_updates=True,
+            silent_notifications=False,
+        )
+    return DesktopPolicyOut(
+        enforce_tray=any(bool(g.enforce_tray) for g in device.groups),
+        allow_self_service=all(bool(g.allow_self_service) for g in device.groups),
+        allow_user_os_updates=all(bool(g.allow_user_os_updates) for g in device.groups),
+        silent_notifications=any(bool(g.silent_notifications) for g in device.groups),
+    )
 
 
 _VER_TOKEN_RE = re.compile(r"\d+|[A-Za-z]+")

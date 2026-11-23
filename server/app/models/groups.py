@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -36,6 +36,10 @@ class Group(Base):
         String(32), nullable=False, default="never"
     )  # never | maintenance_window | grace_period
     grace_period_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=240)
+    enforce_tray: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    allow_self_service: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    allow_user_os_updates: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    silent_notifications: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

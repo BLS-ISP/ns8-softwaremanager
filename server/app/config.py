@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     )
 
     APP_NAME: str = "NS8-SoftwareManager"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.1.0"
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/swm.db"
     DATA_DIR: Path = Path("./data")

@@ -4,13 +4,17 @@ use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use swm_center::bridge::{build_center_router, discover_ui_dist_dir, CenterBridgeState};
+use swm_center::bridge::{
+    build_center_router, cleanup_session_file_if_owned, default_session_file_path,
+    discover_ui_dist_dir, try_handoff_to_existing_instance, write_session_file, CenterBridgeState,
+};
 use swm_center::tray::{
     dispatch_os_notification, launch_desktop_window, should_spawn_native_tray,
     DesktopNotification, NativeTrayHandle, TrayMenuAction, TrayStateTracker,
 };
 use swm_common::{
-    default_ipc_address, send_ipc_request, IpcRequest, IpcResponseData, PackageAction, RebootState,
+    default_ipc_address, send_ipc_request, DesktopPolicy, IpcRequest, IpcResponseData,
+    PackageAction, RebootState,
 };
 
 #[derive(Debug, Parser)]
@@ -88,6 +92,23 @@ async fn run_gui_and_tray(
     tray_only: bool,
     no_open: bool,
 ) -> Result<()> {
+    let single_instance_enabled = port == 0
+        && !no_open
+        && std::env::var("SWM_DISABLE_SINGLE_INSTANCE")
+            .ok()
+            .as_deref()
+            != Some("1");
+    let session_path = default_session_file_path();
+
+    if single_instance_enabled
+        && try_handoff_to_existing_instance(&session_path, tray_only, no_open).await
+    {
+        tracing::info!(
+            "NS8 Software Center is already running in this user session; handed off and exiting."
+        );
+        return Ok(());
+    }
+
     let bind_addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
@@ -95,14 +116,22 @@ async fn run_gui_and_tray(
     let local_addr = listener.local_addr()?;
     let url = format!("http://{local_addr}");
 
+    if single_instance_enabled {
+        let _ = write_session_file(&session_path, &url);
+    }
+
     let app = build_center_router(CenterBridgeState {
         ipc_addr: ipc_addr.clone(),
         ui_dist_dir: discover_ui_dist_dir(),
+        local_url: url.clone(),
+        no_open,
+        ..Default::default()
     });
 
     println!("NS8 Software Center listening on {url}");
 
     let shared_reboot = Arc::new(RwLock::new(RebootState::default()));
+    let shared_policy = Arc::new(RwLock::new(DesktopPolicy::default()));
     let (tray_action_tx, mut tray_action_rx) =
         tokio::sync::mpsc::unbounded_channel::<TrayMenuAction>();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -111,6 +140,7 @@ async fn run_gui_and_tray(
         NativeTrayHandle::spawn(
             url.clone(),
             Arc::clone(&shared_reboot),
+            Arc::clone(&shared_policy),
             tray_action_tx.clone(),
         )
         .map(Arc::new)
@@ -126,12 +156,40 @@ async fn run_gui_and_tray(
     let action_ipc = ipc_addr.clone();
     let action_url = url.clone();
     let action_reboot = Arc::clone(&shared_reboot);
+    let action_policy = Arc::clone(&shared_policy);
     let action_shutdown_tx = shutdown_tx.clone();
     tokio::spawn(async move {
         while let Some(action) = tray_action_rx.recv().await {
             match action {
                 TrayMenuAction::OpenSoftwareCenter | TrayMenuAction::ShowStatus => {
                     launch_desktop_window(&action_url);
+                }
+                TrayMenuAction::SyncNow => {
+                    match send_ipc_request(&action_ipc, &IpcRequest::SyncNow).await {
+                        Ok(resp) if resp.ok => {
+                            let silent = action_policy
+                                .read()
+                                .map(|p| p.silent_notifications)
+                                .unwrap_or(false);
+                            if !silent {
+                                dispatch_os_notification(&DesktopNotification {
+                                    title: "NS8 Software Center".to_string(),
+                                    body: "Synchronisation mit dem NS8-Server wurde gestartet."
+                                        .to_string(),
+                                    urgent: false,
+                                });
+                            }
+                        }
+                        Ok(resp) => {
+                            tracing::warn!(
+                                "Tray SyncNow returned non-ok response: {:?}",
+                                resp.message
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!("Tray SyncNow IPC failed: {err}");
+                        }
+                    }
                 }
                 TrayMenuAction::CheckForUpdates => {
                     match send_ipc_request(&action_ipc, &IpcRequest::TriggerPendingUpdates).await {
@@ -173,6 +231,16 @@ async fn run_gui_and_tray(
                     let _ = send_ipc_request(&action_ipc, &IpcRequest::ConfirmRebootNow).await;
                 }
                 TrayMenuAction::QuitTray => {
+                    let enforce = action_policy
+                        .read()
+                        .map(|p| p.enforce_tray)
+                        .unwrap_or(true);
+                    if enforce {
+                        tracing::info!(
+                            "Ignored QuitTray action because enforce_tray policy is active."
+                        );
+                        continue;
+                    }
                     let _ = action_shutdown_tx.send(true);
                     break;
                 }
@@ -183,6 +251,7 @@ async fn run_gui_and_tray(
     // Spawn background System Tray & Reboot Notification polling task
     let tray_ipc = ipc_addr.clone();
     let poll_reboot = Arc::clone(&shared_reboot);
+    let poll_policy = Arc::clone(&shared_policy);
     let poll_tray_handle = native_tray.clone();
     tokio::spawn(async move {
         let mut tracker = TrayStateTracker::new(tray_only);
@@ -193,6 +262,9 @@ async fn run_gui_and_tray(
                 if let Some(IpcResponseData::Status(snap)) = resp.data {
                     if let Ok(mut guard) = poll_reboot.write() {
                         *guard = snap.reboot_state.clone();
+                    }
+                    if let Ok(mut pguard) = poll_policy.write() {
+                        *pguard = snap.desktop_policy.clone();
                     }
                     for note in tracker.evaluate_notifications(&snap, Utc::now().timestamp()) {
                         dispatch_os_notification(&note);
@@ -207,11 +279,15 @@ async fn run_gui_and_tray(
         }
     });
 
+    let cleanup_url = url.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = shutdown_rx.changed() => {}
+            }
+            if single_instance_enabled {
+                cleanup_session_file_if_owned(&session_path, &cleanup_url);
             }
             if let Some(tray) = native_tray.as_ref() {
                 tray.shutdown();

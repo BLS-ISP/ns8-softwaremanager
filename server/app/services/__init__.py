@@ -18,6 +18,7 @@ from app.services.scheduler import (
     get_dispatchable_jobs_for_device,
     is_device_in_maintenance_window,
     is_window_active_at,
+    resolve_device_desktop_policy,
     resolve_device_reboot_policy,
     run_scheduler_tick,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "is_device_in_maintenance_window",
     "is_window_active_at",
     "parse_byte_range",
+    "resolve_device_desktop_policy",
     "resolve_device_reboot_policy",
     "run_scheduler_tick",
 ]

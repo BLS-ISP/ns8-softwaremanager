@@ -63,6 +63,7 @@ from app.services import (
     get_device_maintenance_windows,
     get_dispatchable_jobs_for_device,
     is_device_in_maintenance_window,
+    resolve_device_desktop_policy,
     resolve_device_reboot_policy,
 )
 
@@ -175,6 +176,7 @@ async def agent_status(
 ) -> AgentStatusResponse:
     device.last_seen_at = utc_now()
     reboot_policy, grace_minutes = resolve_device_reboot_policy(device)
+    desktop_policy = resolve_device_desktop_policy(device)
     windows = await get_device_maintenance_windows(session, device)
     in_mw = is_device_in_maintenance_window(windows, current_utc_time())
 
@@ -193,6 +195,7 @@ async def agent_status(
         in_maintenance_window=in_mw,
         excluded_updates=excluded_updates,
         server_public_key_b64=signing.public_key_b64(),
+        desktop_policy=desktop_policy,
     )
 
 
@@ -229,6 +232,7 @@ async def submit_agent_inventory(
     device.ip_addresses = list(payload.ip_addresses or [])
     device.logged_in_users = list(payload.logged_in_users or [])
     device.reboot_required = payload.reboot_required
+    device.center_running = bool(payload.center_running)
 
     software_updated = False
     if payload.installed_software is not None:
