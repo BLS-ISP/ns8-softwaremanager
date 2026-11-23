@@ -3,6 +3,20 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.5] - 2026-11-23
+
+### Added
+- **Geführter Client-Rollout & Massenbereitstellungs-Assistent (`web/`, `server/`):**
+  - Überarbeitete *Client-Rollout & Agent-Installation*-Ansicht mit Architektur-Erklärung der beiden Client-Komponenten (`swm-agent` Systemdienst + `swm-center` Endbenutzer-„NS8 Software Center“ ohne lokale Admin-Rechte), 1-Klick-Schnellstart-Token sowie dedizierten Tabs für **Einzelplatz-Einzeiler**, **Active Directory GPO / Intune (`install-swm-gpo.ps1`)**, **Ansible (`deploy-swm-agent.yml`)** und **Gold-Image-CLI**.
+  - Neuer Endpunkt `GET /api/v1/admin/agent-artifacts` liefert Live-Dateigrößen und `SHA-256`-Prüfsummen aller Client-Binaries für Direkt-Downloads und die automatische Übernahme beim Agent-Self-Update.
+  - Idempotenter Rollout-Parameter (`skip_if_enrolled=1`) sowie automatische Erstellung von Windows-Startmenü- (`NS8 Software Center.lnk`) und Linux-Desktop-Verknüpfungen (`/usr/share/applications/ns8-swm-center.desktop`) in `/dl/install.ps1` und `/dl/install.sh`.
+  - First-Run-Onboarding-Leitfaden direkt auf dem Dashboard, solange noch keine Endpunkte angebunden sind.
+
+### Fixed
+- **NS8 Cluster-Admin Cockpit-UI (`ui/`):**
+  - Behoben: Leerer Inhaltsbereich und abgeschnittener Titel in der Karte *Endpunkt & Portal-Routing* auf `Status.vue` (verursacht durch nicht-reaktives `$slots.content` in Vue 2 `NsInfoCard` bei asynchron geladener Konfiguration).
+  - Behoben: Zweispaltiges Layout und Größen-/Zeitstempel-Formatierung für *Container-Images* (String- & Byte-Werte aus Podman) und *Persistente Volumes* sowie direkter Client-Onboarding-Leitfaden mit Server-URL und Binary-Links auf der NS8-Statusseite.
+
 ## [1.0.4] - 2026-11-23
 
 ### Fixed

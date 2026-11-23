@@ -1,19 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { FolderKanban, RotateCcw, Save, UploadCloud } from 'lucide-vue-next'
+import { FolderKanban, RotateCcw, Save, Sparkles, UploadCloud } from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
-import type { DeviceGroup, OsFamily, RebootPolicy } from '@/api/types'
+import type { AgentArtifactItem, DeviceGroup, OsFamily, RebootPolicy } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import EmptyState from '@/components/EmptyState.vue'
+import { formatBytes } from '@/utils/format'
 
 const toast = useToast()
 
 const groups = ref<DeviceGroup[]>([])
+const artifacts = ref<AgentArtifactItem[]>([])
 const loading = ref(false)
 
 // Agent Self-Update Form
-const agentVersion = ref('1.0.1')
+const agentVersion = ref('1.0.5')
 const agentOsFamily = ref<OsFamily>('windows')
 const agentDownloadUrl = ref('/dl/agents/windows/swm-agent.exe')
 const agentSha256 = ref('')
@@ -21,10 +23,37 @@ const targetGroupIds = ref<string[]>([])
 const respectMw = ref(true)
 const rollingOut = ref(false)
 
+const matchingBundledAgent = computed(() =>
+  artifacts.value.find(
+    (a) => a.role === 'agent' && a.os_family === agentOsFamily.value && a.available && a.sha256,
+  ),
+)
+
+function applyBundledAgentArtifact() {
+  const found = matchingBundledAgent.value
+  if (!found) return
+  agentDownloadUrl.value = found.download_path
+  agentSha256.value = found.sha256
+  toast.info('Prüfsumme übernommen', `${found.filename} (SHA-256 automatisch eingetragen)`)
+}
+
 async function loadGroups() {
   loading.value = true
   try {
-    groups.value = await adminApi.listGroups()
+    const [grpList, artMeta] = await Promise.all([
+      adminApi.listGroups(),
+      adminApi.getAgentArtifacts().catch(() => ({
+        server_url: '',
+        version: '1.0.5',
+        artifacts: [],
+      })),
+    ])
+    groups.value = grpList
+    artifacts.value = artMeta.artifacts || []
+    if (matchingBundledAgent.value && !agentSha256.value) {
+      agentSha256.value = matchingBundledAgent.value.sha256
+      agentDownloadUrl.value = matchingBundledAgent.value.download_path
+    }
   } catch (err) {
     toast.error('Richtlinien konnten nicht geladen werden', err instanceof Error ? err.message : undefined)
   } finally {
@@ -49,6 +78,12 @@ function onOsChange() {
     agentOsFamily.value === 'windows'
       ? '/dl/agents/windows/swm-agent.exe'
       : '/dl/agents/linux-amd64/swm-agent'
+  if (matchingBundledAgent.value) {
+    agentDownloadUrl.value = matchingBundledAgent.value.download_path
+    agentSha256.value = matchingBundledAgent.value.sha256
+  } else {
+    agentSha256.value = ''
+  }
 }
 
 async function handleSelfUpdate() {
@@ -185,6 +220,25 @@ onMounted(() => {
             Erzeugt Ed25519-signierte Aktualisierungsaufträge mit SHA-256-Prüfung und atomarem Dienst-Austausch
           </p>
         </div>
+      </div>
+
+      <div
+        v-if="matchingBundledAgent"
+        class="mt-4 flex flex-col justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-4 py-3 text-xs sm:flex-row sm:items-center dark:border-sky-500/25 dark:bg-sky-500/10"
+      >
+        <div class="text-slate-700 dark:text-slate-200">
+          Integriertes Server-Paket erkannt:
+          <code class="font-mono font-semibold">{{ matchingBundledAgent.platform }}/{{ matchingBundledAgent.filename }}</code>
+          ({{ formatBytes(matchingBundledAgent.size_bytes) }})
+        </div>
+        <button
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-sky-600 px-3 py-1.5 font-semibold text-white hover:bg-sky-700"
+          @click="applyBundledAgentArtifact"
+        >
+          <Sparkles class="h-3.5 w-3.5" aria-hidden="true" />
+          Pfad &amp; SHA-256 übernehmen
+        </button>
       </div>
 
       <form class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2" @submit.prevent="handleSelfUpdate">

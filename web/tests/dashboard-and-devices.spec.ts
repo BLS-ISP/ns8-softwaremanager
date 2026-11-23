@@ -56,7 +56,38 @@ describe('DashboardView & DevicesView', () => {
     expect(wrapper.get('[data-testid="os-windows-count"]').text()).toBe('15')
     expect(wrapper.get('[data-testid="os-linux-count"]').text()).toBe('9')
     expect(wrapper.find('[data-testid="pending-approval-banner"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="zero-devices-onboarding"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('srv-db01')
+  })
+
+  it('shows first-run client onboarding guide on Dashboard when zero devices are enrolled', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          total_devices: 0,
+          online_devices: 0,
+          pending_approval_devices: 0,
+          reboot_required_devices: 0,
+          patch_compliance_percent: 100,
+          pending_critical_patches: 0,
+          recent_jobs: [],
+          os_breakdown: { windows: 0, linux: 0 },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    const router = createAppRouter(true)
+    await router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(DashboardView, {
+      global: { plugins: [router] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="zero-devices-onboarding"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('NS8 Software Center')
   })
 
   it('approves a pending device via POST /api/v1/admin/devices/{id}/approve and updates badge', async () => {

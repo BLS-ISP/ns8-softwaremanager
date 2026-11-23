@@ -5,6 +5,7 @@
 
 .ns-page-content {
   padding: 1.5rem 2rem 3rem;
+  max-width: 96rem;
 }
 
 .mg-bottom-md {
@@ -21,39 +22,109 @@
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
 
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.two-col-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .two-col-grid,
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .ns-card {
-  min-height: 11rem;
+  min-height: 12.5rem;
+}
+
+.card-slot-body {
+  width: 100%;
+  text-align: left;
 }
 
 .kv-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  margin-top: 0.75rem;
+  margin-top: 0.5rem;
+  width: 100%;
 }
 
 .kv-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
-  font-size: 0.875rem;
-  border-bottom: 1px solid #e0e0e0;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  border-bottom: 1px solid #e8e8e8;
   padding-bottom: 0.375rem;
+}
+
+.kv-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .kv-label {
   color: #525252;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .kv-value {
   color: #161616;
   font-weight: 400;
-  word-break: break-all;
+  text-align: right;
+  word-break: break-word;
+}
+
+.kv-mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.pill-green {
+  background-color: #defbe6;
+  color: #0e6027;
+}
+
+.pill-gray {
+  background-color: #e0e0e0;
+  color: #393939;
+}
+
+.pill-blue {
+  background-color: #edf5ff;
+  color: #0043ce;
 }

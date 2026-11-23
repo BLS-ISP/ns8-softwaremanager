@@ -1,5 +1,6 @@
 import type {
   AdminUser,
+  AgentArtifactsResponse,
   CatalogCreatePayload,
   CatalogItem,
   ChunkUploadResponse,
@@ -482,5 +483,22 @@ export const adminApi = {
       `/api/v1/admin/enrollment-tokens/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
     )
+  },
+
+  async getAgentArtifacts(): Promise<AgentArtifactsResponse> {
+    const raw = await apiRequest<unknown>('/api/v1/admin/agent-artifacts')
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const obj = raw as Partial<AgentArtifactsResponse>
+      return {
+        server_url: typeof obj.server_url === 'string' ? obj.server_url : '',
+        version: typeof obj.version === 'string' ? obj.version : '1.0.0',
+        artifacts: Array.isArray(obj.artifacts) ? obj.artifacts : [],
+      }
+    }
+    return {
+      server_url: typeof window !== 'undefined' ? window.location.origin : '',
+      version: '1.0.0',
+      artifacts: [],
+    }
   },
 }

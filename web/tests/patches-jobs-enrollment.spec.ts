@@ -187,5 +187,14 @@ describe('Login, OS Patching, Job Log Viewer & Enrollment Views', () => {
     const headlessBtn = wrapper.findAll('button').find((b) => b.text().includes('Headless-Server'))
     await headlessBtn!.trigger('click')
     expect(wrapper.text()).toContain('headless=1')
+
+    // Verify GPO & Ansible mass-rollout tabs render idempotent scripts
+    await wrapper.get('[data-testid="tab-gpo-tok-1"]').trigger('click')
+    expect(wrapper.text()).toContain('install-swm-gpo.ps1')
+    expect(wrapper.text()).toContain('skip_if_enrolled=1')
+
+    await wrapper.get('[data-testid="tab-ansible-tok-1"]').trigger('click')
+    expect(wrapper.text()).toContain('deploy-swm-agent.yml')
+    expect(wrapper.text()).toContain('/etc/ns8-swm/config.json')
   })
 })

@@ -1,25 +1,20 @@
 <template>
-  <div class="bx--grid bx--grid--full-width ns-page-content">
-    <div class="bx--row">
-      <div class="bx--col-lg-16 mg-bottom-lg">
-        <h2>{{ $t("about.title") }}</h2>
-      </div>
+  <div class="ns-page-content">
+    <div class="mg-bottom-lg">
+      <h2>{{ $t("about.title") }}</h2>
     </div>
 
-    <div v-if="error.version" class="bx--row mg-bottom-md">
-      <div class="bx--col-lg-10">
-        <NsInlineNotification
-          kind="error"
-          :title="$t('error.cannot_retrieve_installed_modules')"
-          :description="error.version"
-          :showCloseButton="false"
-        />
-      </div>
+    <div v-if="error.version" class="mg-bottom-md">
+      <NsInlineNotification
+        kind="error"
+        :title="$t('error.cannot_retrieve_installed_modules')"
+        :description="error.version"
+        :showCloseButton="false"
+      />
     </div>
 
-    <div class="bx--row">
-      <div class="bx--col-lg-10">
-        <cv-tile light>
+    <div style="max-width: 56rem">
+      <cv-tile light>
           <cv-skeleton-text
             v-if="loading.moduleInfo"
             :paragraph="true"
@@ -99,7 +94,6 @@
             </div>
           </div>
         </cv-tile>
-      </div>
     </div>
   </div>
 </template>

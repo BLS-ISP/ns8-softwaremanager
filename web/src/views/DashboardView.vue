@@ -4,11 +4,14 @@ import { RouterLink } from 'vue-router'
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   CheckCircle2,
   Clock,
+  Download,
   KeyRound,
   Laptop,
+  Monitor,
   Package,
   RefreshCw,
   RotateCcw,
@@ -131,6 +134,72 @@ onMounted(() => {
       >
         Jetzt prüfen &amp; freigeben
       </RouterLink>
+    </div>
+
+    <!-- First-Run Zero-Devices Onboarding Guide -->
+    <div
+      v-if="!loading && summary.total_devices === 0"
+      data-testid="zero-devices-onboarding"
+      class="rounded-xl border border-sky-200 bg-white p-6 shadow-xs dark:border-sky-500/30 dark:bg-slate-900"
+    >
+      <div class="flex flex-col justify-between gap-4 border-b border-slate-100 pb-5 lg:flex-row lg:items-center dark:border-slate-800">
+        <div class="flex items-start gap-3.5">
+          <div class="rounded-xl bg-sky-50 p-3 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400">
+            <Download class="h-6 w-6" aria-hidden="true" />
+          </div>
+          <div>
+            <span class="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+              Schnellstart · Client-Anbindung
+            </span>
+            <h2 class="mt-1 text-base font-bold text-slate-900 dark:text-slate-50">
+              So kommen Management-Agent &amp; Software Center auf Ihre Windows- und Linux-Clients
+            </h2>
+            <p class="mt-1 max-w-3xl text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+              Clients verbinden sich ausschließlich ausgehend über HTTPS/WSS (Port 443) mit diesem Server. Der Installer richtet sowohl den Hintergrunddienst (<code class="font-mono text-slate-800 dark:text-slate-200">swm-agent</code>) als auch auf Arbeitsplätzen die Self-Service-App <strong class="text-slate-800 dark:text-slate-200">„NS8 Software Center“</strong> (<code class="font-mono text-slate-800 dark:text-slate-200">swm-center</code>) ohne lokale Admin-Rechte ein.
+            </p>
+          </div>
+        </div>
+
+        <RouterLink
+          to="/enrollment"
+          class="inline-flex shrink-0 items-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white shadow-xs transition hover:bg-sky-700"
+        >
+          Rollout-Assistent &amp; Downloads öffnen
+          <ArrowRight class="h-4 w-4" aria-hidden="true" />
+        </RouterLink>
+      </div>
+
+      <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+          <div class="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
+            <span class="flex h-5 w-5 items-center justify-center rounded-full bg-sky-600 text-[11px] text-white">1</span>
+            Enrollment-Token erstellen
+          </div>
+          <p class="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+            Erzeugen Sie unter <strong>Client-Rollout &amp; Agent</strong> mit einem Klick ein Token — wahlweise mit automatischer Freigabe (<em>Auto-Approve</em> für GPO/Ansible) oder manueller Prüfung.
+          </p>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+          <div class="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
+            <span class="flex h-5 w-5 items-center justify-center rounded-full bg-sky-600 text-[11px] text-white">2</span>
+            Auf Einzelplatz oder Flotte verteilen
+          </div>
+          <p class="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+            Kopieren Sie den <strong>PowerShell- / Bash-Einzeiler</strong> für Tests oder laden Sie das fertige, idempotente <strong>AD-GPO-Startskript (<code>.ps1</code>)</strong> bzw. <strong>Ansible-Playbook (<code>.yml</code>)</strong> herunter.
+          </p>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-800/40">
+          <div class="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
+            <Monitor class="h-4 w-4 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+            Zentrale Steuerung &amp; Self-Service
+          </div>
+          <p class="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+            Nach der Registrierung steuern Sie OS-Updates und Pflicht-Software zentral, während Benutzer freigegebene Apps selbst im <strong>NS8 Software Center</strong> (Startmenü / System-Tray) installieren.
+          </p>
+        </div>
+      </div>
     </div>
 
     <!-- Refined 4-Card KPI Hierarchy -->

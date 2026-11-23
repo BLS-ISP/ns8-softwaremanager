@@ -362,3 +362,22 @@ export interface SelfUpdateResponse {
   jobs_created: number
   job_ids: string[]
 }
+
+export interface AgentArtifactItem {
+  platform: string
+  os_family: OsFamily
+  filename: string
+  role: 'agent' | 'center' | string
+  label: string
+  available: boolean
+  size_bytes: number
+  sha256: string
+  download_path: string
+  download_url: string
+}
+
+export interface AgentArtifactsResponse {
+  server_url: string
+  version: string
+  artifacts: AgentArtifactItem[]
+}

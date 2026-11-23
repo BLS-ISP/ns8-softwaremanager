@@ -1,160 +1,196 @@
 <template>
-  <div class="bx--grid bx--grid--full-width ns-page-content">
-    <div class="bx--row">
-      <div class="bx--col-lg-16 page-toolbar">
+  <div class="ns-page-content">
+    <div class="page-toolbar">
+      <div>
         <h2 class="page-title">{{ $t("settings.title") }}</h2>
-        <NsButton
-          v-if="appUrl"
-          kind="secondary"
-          :icon="Launch20"
-          @click="openAdminConsole"
-        >
-          {{ $t("settings.open_console") }}
-        </NsButton>
+        <p class="page-subtitle">{{ $t("settings.subtitle") }}</p>
       </div>
+      <NsButton
+        v-if="appUrl"
+        kind="primary"
+        :icon="Launch20"
+        @click="openAdminConsole"
+      >
+        {{ $t("settings.open_console") }}
+      </NsButton>
     </div>
 
-    <div v-if="saveSuccess" class="bx--row mg-bottom-md">
-      <div class="bx--col-lg-10">
-        <NsInlineNotification
-          kind="success"
-          :title="$t('settings.saved_title')"
-          :description="$t('settings.saved_description')"
-          :showCloseButton="true"
-          @close="saveSuccess = false"
+    <div v-if="saveSuccess" class="mg-bottom-md">
+      <NsInlineNotification
+        kind="success"
+        :title="$t('settings.saved_title')"
+        :description="$t('settings.saved_description')"
+        :showCloseButton="true"
+        @close="saveSuccess = false"
+      />
+    </div>
+
+    <div v-if="error.getConfiguration" class="mg-bottom-md">
+      <NsInlineNotification
+        kind="error"
+        :title="$t('action.get-configuration')"
+        :description="error.getConfiguration"
+        :showCloseButton="false"
+      />
+    </div>
+
+    <div v-if="error.configureModule" class="mg-bottom-md">
+      <NsInlineNotification
+        kind="error"
+        :title="$t('action.configure-module')"
+        :description="error.configureModule"
+        :showCloseButton="false"
+      />
+    </div>
+
+    <div class="settings-layout">
+      <!-- Left Column: Configuration Form -->
+      <cv-tile light>
+        <cv-skeleton-text
+          v-if="loading.getConfiguration"
+          :paragraph="true"
+          :line-count="8"
         />
-      </div>
-    </div>
 
-    <div v-if="error.getConfiguration" class="bx--row mg-bottom-md">
-      <div class="bx--col-lg-10">
-        <NsInlineNotification
-          kind="error"
-          :title="$t('action.get-configuration')"
-          :description="error.getConfiguration"
-          :showCloseButton="false"
-        />
-      </div>
-    </div>
+        <cv-form v-else @submit.prevent="configureModule">
+          <div v-if="!isConfigured && !ldap_domain && !admin_password" class="mg-bottom-md">
+            <NsInlineNotification
+              kind="info"
+              :title="$t('settings.initial_password_hint_title')"
+              :description="$t('settings.initial_password_hint_desc')"
+              :showCloseButton="false"
+            />
+          </div>
 
-    <div v-if="error.configureModule" class="bx--row mg-bottom-md">
-      <div class="bx--col-lg-10">
-        <NsInlineNotification
-          kind="error"
-          :title="$t('action.configure-module')"
-          :description="error.configureModule"
-          :showCloseButton="false"
-        />
-      </div>
-    </div>
-
-    <div class="bx--row">
-      <div class="bx--col-lg-10">
-        <cv-tile light>
-          <cv-skeleton-text
-            v-if="loading.getConfiguration"
-            :paragraph="true"
-            :line-count="8"
+          <!-- Hostname / FQDN -->
+          <NsTextInput
+            v-model.trim="domain_name"
+            :label="$t('settings.domain_name')"
+            :placeholder="$t('settings.domain_name_placeholder')"
+            :helper-text="$t('settings.domain_name_helper')"
+            :invalid-message="error.domain_name"
+            :disabled="loading.configureModule"
+            ref="domain_name"
           />
 
-          <cv-form v-else @submit.prevent="configureModule">
-            <!-- Hostname / FQDN -->
-            <NsTextInput
-              v-model.trim="domain_name"
-              :label="$t('settings.domain_name')"
-              :placeholder="$t('settings.domain_name_placeholder')"
-              :helper-text="$t('settings.domain_name_helper')"
-              :invalid-message="error.domain_name"
-              :disabled="loading.configureModule"
-              ref="domain_name"
-            />
+          <!-- Let's Encrypt toggle -->
+          <NsToggle
+            v-model="lets_encrypt"
+            :label="$t('settings.lets_encrypt')"
+            value="lets_encrypt"
+            :form-item="true"
+            :disabled="loading.configureModule"
+            class="mg-bottom-md"
+          >
+            <template slot="text-left">{{ $t("common.disabled") }}</template>
+            <template slot="text-right">{{ $t("common.enabled") }}</template>
+          </NsToggle>
 
-            <!-- Let's Encrypt toggle -->
-            <NsToggle
-              v-model="lets_encrypt"
-              :label="$t('settings.lets_encrypt')"
-              value="lets_encrypt"
-              :form-item="true"
-              :disabled="loading.configureModule"
-              class="mg-bottom-md"
+          <!-- HTTP to HTTPS redirect toggle -->
+          <NsToggle
+            v-model="http2https"
+            :label="$t('settings.http2https')"
+            value="http2https"
+            :form-item="true"
+            :disabled="loading.configureModule"
+            class="mg-bottom-md"
+          >
+            <template slot="text-left">{{ $t("common.disabled") }}</template>
+            <template slot="text-right">{{ $t("common.enabled") }}</template>
+          </NsToggle>
+
+          <!-- NS8 User-Domain / LDAP selector -->
+          <NsComboBox
+            v-model="ldap_domain"
+            :title="$t('settings.ldap_domain')"
+            :label="$t('settings.ldap_domain_placeholder')"
+            :helper-text="$t('settings.ldap_domain_helper')"
+            :invalid-message="error.ldap_domain"
+            :auto-filter="true"
+            :auto-highlight="true"
+            :options="userDomainOptions"
+            :disabled="loading.configureModule"
+            class="mg-bottom-md"
+          />
+
+          <!-- Local fallback administrator username -->
+          <NsTextInput
+            v-model.trim="admin_username"
+            :label="$t('settings.admin_username')"
+            :helper-text="$t('settings.admin_username_helper')"
+            :invalid-message="error.admin_username"
+            :disabled="loading.configureModule"
+            ref="admin_username"
+          />
+
+          <!-- Local fallback administrator password -->
+          <NsTextInput
+            v-model="admin_password"
+            type="password"
+            :label="$t('settings.admin_password')"
+            :placeholder="
+              isConfigured
+                ? $t('settings.admin_password_placeholder')
+                : $t('settings.admin_password_placeholder_initial')
+            "
+            :helper-text="$t('settings.admin_password_helper')"
+            :invalid-message="error.admin_password"
+            :disabled="loading.configureModule"
+            ref="admin_password"
+          />
+
+          <div class="form-actions">
+            <NsButton
+              kind="primary"
+              :icon="Save20"
+              :loading="loading.configureModule"
+              :disabled="loading.getConfiguration || loading.configureModule"
             >
-              <template slot="text-left">{{ $t("common.disabled") }}</template>
-              <template slot="text-right">{{ $t("common.enabled") }}</template>
-            </NsToggle>
+              {{ $t("settings.save") }}
+            </NsButton>
 
-            <!-- HTTP to HTTPS redirect toggle -->
-            <NsToggle
-              v-model="http2https"
-              :label="$t('settings.http2https')"
-              value="http2https"
-              :form-item="true"
+            <NsButton
+              v-if="appUrl"
+              type="button"
+              kind="ghost"
+              :icon="Launch20"
               :disabled="loading.configureModule"
-              class="mg-bottom-md"
+              @click="openAdminConsole"
             >
-              <template slot="text-left">{{ $t("common.disabled") }}</template>
-              <template slot="text-right">{{ $t("common.enabled") }}</template>
-            </NsToggle>
+              {{ $t("settings.open_console") }}
+            </NsButton>
+          </div>
+        </cv-form>
+      </cv-tile>
 
-            <!-- NS8 User-Domain / LDAP selector -->
-            <NsComboBox
-              v-model="ldap_domain"
-              :title="$t('settings.ldap_domain')"
-              :label="$t('settings.ldap_domain_placeholder')"
-              :helper-text="$t('settings.ldap_domain_helper')"
-              :invalid-message="error.ldap_domain"
-              :auto-filter="true"
-              :auto-highlight="true"
-              :options="userDomainOptions"
-              :disabled="loading.configureModule"
-              class="mg-bottom-md"
-            />
+      <!-- Right Column: Architecture & Authentication Reference -->
+      <cv-tile light class="info-side-tile">
+        <h3 class="info-heading">{{ $t("settings.info_title") }}</h3>
 
-            <!-- Local fallback administrator username -->
-            <NsTextInput
-              v-model.trim="admin_username"
-              :label="$t('settings.admin_username')"
-              :helper-text="$t('settings.admin_username_helper')"
-              :invalid-message="error.admin_username"
-              :disabled="loading.configureModule"
-              ref="admin_username"
-            />
+        <div class="info-block">
+          <div class="info-block-title">
+            <Security20 />
+            <span>{{ $t("settings.info_outbound_title") }}</span>
+          </div>
+          <p class="info-block-desc">{{ $t("settings.info_outbound_desc") }}</p>
+        </div>
 
-            <!-- Local fallback administrator password (optional update) -->
-            <NsTextInput
-              v-model="admin_password"
-              type="password"
-              :label="$t('settings.admin_password')"
-              :placeholder="$t('settings.admin_password_placeholder')"
-              :helper-text="$t('settings.admin_password_helper')"
-              :invalid-message="error.admin_password"
-              :disabled="loading.configureModule"
-              ref="admin_password"
-            />
+        <div class="info-block">
+          <div class="info-block-title">
+            <Security20 />
+            <span>{{ $t("settings.info_auth_title") }}</span>
+          </div>
+          <p class="info-block-desc">{{ $t("settings.info_auth_desc") }}</p>
+        </div>
 
-            <div class="form-actions">
-              <NsButton
-                kind="primary"
-                :icon="Save20"
-                :loading="loading.configureModule"
-                :disabled="loading.getConfiguration || loading.configureModule"
-              >
-                {{ $t("settings.save") }}
-              </NsButton>
-
-              <NsButton
-                v-if="appUrl"
-                type="button"
-                kind="ghost"
-                :icon="Launch20"
-                :disabled="loading.configureModule"
-                @click="openAdminConsole"
-              >
-                {{ $t("settings.open_console") }}
-              </NsButton>
-            </div>
-          </cv-form>
-        </cv-tile>
-      </div>
+        <div class="info-block">
+          <div class="info-block-title">
+            <Laptop20 />
+            <span>{{ $t("settings.info_clients_title") }}</span>
+          </div>
+          <p class="info-block-desc">{{ $t("settings.info_clients_desc") }}</p>
+        </div>
+      </cv-tile>
     </div>
   </div>
 </template>
@@ -171,12 +207,16 @@ import {
 } from "@nethserver/ns8-ui-lib";
 import Save20 from "@carbon/icons-vue/es/save/20";
 import Launch20 from "@carbon/icons-vue/es/launch/20";
+import Security20 from "@carbon/icons-vue/es/security/20";
+import Laptop20 from "@carbon/icons-vue/es/laptop/20";
 
 export default {
   name: "Settings",
   components: {
     Save20,
     Launch20,
+    Security20,
+    Laptop20,
   },
   mixins: [
     TaskService,
@@ -192,10 +232,13 @@ export default {
     return {
       Save20,
       Launch20,
+      Security20,
+      Laptop20,
       q: {
         page: "settings",
       },
       urlCheckInterval: null,
+      isConfigured: false,
       domain_name: "",
       lets_encrypt: false,
       http2https: true,
@@ -336,6 +379,7 @@ export default {
     },
     getConfigurationCompleted(taskContext, taskResult) {
       const config = taskResult.output || {};
+      this.isConfigured = Boolean(config.configured);
       this.domain_name = config.domain_name || "";
       this.lets_encrypt = Boolean(config.lets_encrypt);
       this.http2https = config.http2https !== undefined ? Boolean(config.http2https) : true;
@@ -344,7 +388,7 @@ export default {
       this.admin_username = config.admin_username || "admin";
       this.admin_password = "";
       this.appUrl = config.app_url || "";
-      this.setConfiguredInStore(Boolean(config.configured));
+      this.setConfiguredInStore(this.isConfigured);
       this.setAppUrlInStore(this.appUrl);
       this.loading.getConfiguration = false;
     },
@@ -423,6 +467,7 @@ export default {
       this.loading.configureModule = false;
       this.admin_password = "";
       this.saveSuccess = true;
+      this.isConfigured = true;
       if (taskResult && taskResult.output && taskResult.output.app_url) {
         this.appUrl = taskResult.output.app_url;
         this.setAppUrlInStore(this.appUrl);
@@ -448,10 +493,55 @@ export default {
   margin: 0;
 }
 
+.page-subtitle {
+  margin: 0.2rem 0 0;
+  font-size: 0.875rem;
+  color: #525252;
+}
+
 .form-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   margin-top: 1.5rem;
+}
+
+.info-side-tile {
+  padding: 1.25rem 1.5rem;
+}
+
+.info-heading {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #161616;
+}
+
+.info-block {
+  padding: 0.875rem 0;
+  border-top: 1px solid #e0e0e0;
+}
+
+.info-block:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.info-block-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #161616;
+  margin-bottom: 0.35rem;
+}
+
+.info-block-desc {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #525252;
 }
 </style>

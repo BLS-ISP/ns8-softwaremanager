@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   CalendarClock,
+  Download,
   FolderKanban,
-  KeyRound,
   Laptop,
   LayoutDashboard,
   LogOut,
@@ -56,13 +56,13 @@ function toggleSidebarCollapsed(): void {
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/devices', label: 'Geräte & Flotte', icon: Laptop },
+  { to: '/enrollment', label: 'Client-Rollout & Agent', icon: Download },
   { to: '/groups', label: 'Gerätegruppen', icon: FolderKanban },
   { to: '/patches', label: 'OS-Patching', icon: Wrench },
   { to: '/catalog', label: 'Software-Katalog', icon: Package },
   { to: '/deployments', label: 'Bereitstellungen', icon: Rocket },
   { to: '/jobs', label: 'Aufträge & Wartung', icon: CalendarClock },
   { to: '/policies', label: 'Richtlinien & Agent', icon: RotateCcw },
-  { to: '/enrollment', label: 'Client-Enrollment', icon: KeyRound },
 ]
 
 const currentSectionLabel = computed(() => {
@@ -257,6 +257,16 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="flex items-center gap-2.5">
+            <RouterLink
+              v-if="route.path !== '/' && route.path !== '/enrollment' && route.path !== '/devices'"
+              to="/enrollment"
+              data-testid="header-enroll-cta"
+              class="hidden items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-sky-700 md:inline-flex"
+            >
+              <Download class="h-3.5 w-3.5" aria-hidden="true" />
+              Clients anbinden
+            </RouterLink>
+
             <span
               class="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-[11px] font-medium text-emerald-800 sm:inline-flex dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300"
             >

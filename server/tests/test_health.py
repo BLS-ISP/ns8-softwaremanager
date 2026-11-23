@@ -92,3 +92,44 @@ async def test_static_agent_download_and_spa_fallback(
     assert api_404.status_code == 404
     dl_404 = await client.get("/dl/does-not-exist")
     assert dl_404.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_agent_artifacts_metadata_and_idempotent_gpo_bootstrap(
+    client: httpx.AsyncClient,
+    admin_headers: dict[str, str],
+    test_settings: Settings,
+) -> None:
+    import hashlib
+
+    win_dir = test_settings.STATIC_AGENTS_DIR / "windows"
+    lin_dir = test_settings.STATIC_AGENTS_DIR / "linux-amd64"
+    win_dir.mkdir(parents=True, exist_ok=True)
+    lin_dir.mkdir(parents=True, exist_ok=True)
+    win_bytes = b"MZ-win-agent-payload"
+    lin_bytes = b"\x7fELF-linux-agent-payload"
+    (win_dir / "swm-agent.exe").write_bytes(win_bytes)
+    (lin_dir / "swm-agent").write_bytes(lin_bytes)
+
+    meta_resp = await client.get("/api/v1/admin/agent-artifacts", headers=admin_headers)
+    assert meta_resp.status_code == 200
+    meta = meta_resp.json()
+    assert "server_url" in meta
+    artifacts = {f"{a['platform']}/{a['filename']}": a for a in meta["artifacts"]}
+    assert artifacts["windows/swm-agent.exe"]["available"] is True
+    assert artifacts["windows/swm-agent.exe"]["sha256"] == hashlib.sha256(win_bytes).hexdigest()
+    assert artifacts["linux-amd64/swm-agent"]["available"] is True
+    assert artifacts["linux-amd64/swm-agent"]["sha256"] == hashlib.sha256(lin_bytes).hexdigest()
+    assert artifacts["windows/swm-center.exe"]["available"] is False
+
+    # Verify idempotent GPO/Ansible skip_if_enrolled=1 bootstrap scripts
+    ps1_gpo = await client.get("/dl/install.ps1?token=tok-gpo-1&headless=0&skip_if_enrolled=1")
+    assert ps1_gpo.status_code == 200
+    assert "$SkipIfEnrolled = 1" in ps1_gpo.text
+    assert "NS8SoftwareManagerAgent" in ps1_gpo.text
+    assert "NS8 Software Center.lnk" in ps1_gpo.text
+
+    sh_ans = await client.get("/dl/install.sh?token=tok-ans-1&headless=0&skip_if_enrolled=1")
+    assert sh_ans.status_code == 200
+    assert "SKIP_IF_ENROLLED=1" in sh_ans.text
+    assert "/usr/share/applications/ns8-swm-center.desktop" in sh_ans.text
