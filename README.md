@@ -55,7 +55,13 @@ NS8-SoftwareManager/
 ├── CONTRACT.md                    # Canonical REST, WebSocket, Local IPC & Ed25519 cryptographic specification
 ├── REQUIREMENTS.md                # Product concept, requirements & implementation status (German)
 ├── CHANGELOG.md                   # Release history (Keep a Changelog / SemVer)
-├── docs/decisions/                # Architecture Decision Records (ADRs)
+├── docs/                          # Step-by-step User & Admin Manuals + Architecture Decision Records
+│   ├── README.md                  # Documentation hub & handbook index
+│   ├── admin-handbuch.md          # Complete Administrator Guide (German)
+│   ├── client-rollout-handbuch.md # Mass deployment playbooks: GPO, Intune, Jamf, Ansible & Gold Images
+│   ├── benutzerhandbuch-software-center.md # Jargon-free End-User Guide for employees / intranet
+│   ├── troubleshooting-und-betrieb.md      # Helpdesk runbook, log paths & error resolution
+│   └── decisions/                 # Architecture Decision Records (ADR-001 .. ADR-003)
 ├── server/                        # Central Python FastAPI backend (SQLAlchemy 2 async, scheduler & signing)
 ├── web/                           # Standalone Admin Web Console (Vue 3 + TypeScript + Vite + TailwindCSS)
 ├── ui/                            # NS8 Cluster-Admin Cockpit UI (Vue 2 + @nethserver/ns8-ui-lib, en/de)
@@ -68,10 +74,17 @@ NS8-SoftwareManager/
     └── packaging/                 # Bootstrap scripts, systemd units, macOS launchd plists, WiX (.wxs) & nFPM (.deb/.rpm)
 ```
 
-Component-level developer guides and architectural rationales:
+### User & Administrator Manuals (`docs/` — German)
+- [docs/README.md](docs/README.md) — Documentation hub & role-based manual index
+- [docs/admin-handbuch.md](docs/admin-handbuch.md) — Step-by-step **Administrator Manual** (NS8 setup, groups/rings, maintenance windows, fleet remote actions, OS patching, software catalog & kiosk policies)
+- [docs/client-rollout-handbuch.md](docs/client-rollout-handbuch.md) — **Client Rollout & Mass Deployment Guide** (Single PC, Active Directory GPO, Microsoft Intune, Jamf Pro / Mosyle MDM, Ansible, VM Gold-Image cloning rules & clean uninstallation)
+- [docs/benutzerhandbuch-software-center.md](docs/benutzerhandbuch-software-center.md) — **End-User Software Center Guide** (ready-to-share employee intranet guide)
+- [docs/troubleshooting-und-betrieb.md](docs/troubleshooting-und-betrieb.md) — **Troubleshooting, Log Analysis & Operations Runbook**
+
+### Developer Guides & Specifications
 - [server/README.md](server/README.md) — FastAPI backend, configuration, live schema upgrades, and `pytest` suites
 - [agent/README.md](agent/README.md) — Rust workspace, embedded UI build order, platform matrix, and CLI reference
-- [web/README.md](web/README.md) — Dual-UI boundary (`web/` standalone console vs. `ui/` NS8 Cockpit module)
+- [web/README.md](web/README.md) & [ui/README.md](ui/README.md) — Dual-UI boundary (`web/` standalone console vs. `ui/` NS8 Cockpit module)
 - [CONTRACT.md](CONTRACT.md) — Complete REST, WebSocket, Local IPC, and `Ed25519` wire specification
 - [docs/decisions/](docs/decisions/) — Architecture Decision Records (`ADR-001` through `ADR-003`)
 
