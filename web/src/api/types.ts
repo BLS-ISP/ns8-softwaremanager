@@ -1,8 +1,15 @@
 export type AuthSource = 'local' | 'ldap'
-export type OsFamily = 'windows' | 'linux'
+export type OsFamily = 'windows' | 'linux' | 'macos'
 export type DeviceStatus = 'pending' | 'approved' | 'revoked'
 export type RebootPolicy = 'never' | 'maintenance_window' | 'grace_period'
-export type SourceType = 'winget' | 'apt' | 'dnf' | 'flatpak' | 'custom'
+export type SourceType =
+  | 'winget'
+  | 'apt'
+  | 'dnf'
+  | 'flatpak'
+  | 'brew'
+  | 'brew_cask'
+  | 'custom'
 export type DeploymentMode = 'required' | 'available' | 'uninstall'
 
 export interface AdminUser {
@@ -33,6 +40,7 @@ export interface HealthResponse {
 export interface OsBreakdown {
   windows: number
   linux: number
+  macos?: number
 }
 
 export interface JobItem {
@@ -268,11 +276,24 @@ export interface PatchExcludePayload {
 }
 
 export interface DetectionRule {
-  type?: 'none' | 'registry' | 'file' | 'package' | string
+  type?:
+    | 'none'
+    | 'registry'
+    | 'file'
+    | 'package'
+    | 'app_bundle'
+    | 'pkgutil'
+    | 'brew'
+    | 'brew_cask'
+    | string
   path?: string
   key_path?: string
   value_name?: string
   package_name?: string
+  package?: string
+  package_id?: string
+  bundle_id?: string
+  min_version?: string
   operator?: 'gte' | 'eq' | 'exists' | string
   version?: string
   expected_version?: string
@@ -319,6 +340,8 @@ export interface CatalogCreatePayload {
   return_codes: Record<string, string>
   detection_rule: DetectionRule | Record<string, unknown>
 }
+
+export type CatalogItemCreatePayload = CatalogCreatePayload
 
 export interface ChunkUploadResponse {
   package_id: string

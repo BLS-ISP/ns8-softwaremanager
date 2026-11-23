@@ -82,6 +82,36 @@
                   <Launch16 class="inline-launch" />
                 </cv-link>
               </div>
+              <div v-if="cleanAppUrl" class="agent-downloads">
+                <div class="agent-downloads-label">
+                  {{ $t("status.agent_downloads") }}:
+                </div>
+                <div class="agent-downloads-links">
+                  <cv-link
+                    :href="cleanAppUrl + '/dl/agents/windows/swm-agent.exe'"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {{ $t("status.download_agent_windows") }}
+                  </cv-link>
+                  <span class="link-sep">·</span>
+                  <cv-link
+                    :href="cleanAppUrl + '/dl/agents/linux-amd64/swm-agent'"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {{ $t("status.download_agent_linux") }}
+                  </cv-link>
+                  <span class="link-sep">·</span>
+                  <cv-link
+                    :href="cleanAppUrl + '/dl/agents/macos-universal/swm-agent'"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {{ $t("status.download_agent_macos") }}
+                  </cv-link>
+                </div>
+              </div>
               <div v-if="config && config.configured" class="card-tags">
                 <NsTag
                   :label="
@@ -396,6 +426,12 @@ export default {
   },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core", "appName"]),
+    cleanAppUrl() {
+      if (!this.config || !this.config.app_url) {
+        return "";
+      }
+      return String(this.config.app_url).replace(/\/+$/, "");
+    },
   },
   beforeRouteEnter(to, from, next) {
     next((vm) => {
@@ -708,5 +744,29 @@ export default {
 .inline-launch {
   vertical-align: middle;
   margin-left: $spacing-02;
+}
+
+.agent-downloads {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $spacing-01;
+  font-size: 0.75rem;
+}
+
+.agent-downloads-label {
+  color: $text-02;
+}
+
+.agent-downloads-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: $spacing-02;
+}
+
+.link-sep {
+  color: $text-02;
 }
 </style>

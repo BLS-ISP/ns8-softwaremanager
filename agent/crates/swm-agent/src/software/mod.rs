@@ -1,5 +1,6 @@
 pub mod detection;
 pub mod linux_installer;
+pub mod macos_installer;
 pub mod windows_installer;
 pub mod winget;
 

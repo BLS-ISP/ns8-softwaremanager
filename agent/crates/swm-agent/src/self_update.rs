@@ -3,6 +3,75 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use swm_common::verify_file_sha256;
 
+/// Checks whether `header` begins with a valid native executable or script signature:
+/// - Windows PE (`MZ`)
+/// - Linux ELF (`\x7fELF`)
+/// - macOS Mach-O 64/32-bit (`\xCF\xFA\xED\xFE`, `\xFE\xED\xFA\xCF`, `\xCE\xFA\xED\xFE`, `\xFE\xED\xFA\xCE`)
+/// - macOS Universal / Fat binary (`\xCA\xFE\xBA\xBE`, `\xBE\xBA\xFE\xCA`, `\xCA\xFE\xBA\xBF`, `\xBF\xBA\xFE\xCA`)
+/// - POSIX / batch test scripts (`#!`, `@echo`)
+pub fn has_valid_executable_magic(header: &[u8]) -> bool {
+    header.starts_with(b"MZ")
+        || header.starts_with(b"\x7fELF")
+        || header.starts_with(b"\xCF\xFA\xED\xFE")
+        || header.starts_with(b"\xFE\xED\xFA\xCF")
+        || header.starts_with(b"\xCE\xFA\xED\xFE")
+        || header.starts_with(b"\xFE\xED\xFA\xCE")
+        || header.starts_with(b"\xCA\xFE\xBA\xBE")
+        || header.starts_with(b"\xBE\xBA\xFE\xCA")
+        || header.starts_with(b"\xCA\xFE\xBA\xBF")
+        || header.starts_with(b"\xBF\xBA\xFE\xCA")
+        || header.starts_with(b"#!")
+        || header.starts_with(b"@echo")
+}
+
+/// Returns the platform-specific service restart command `(program, args)` after a self-update.
+pub fn build_self_update_restart_command(os_family: &str) -> (&'static str, Vec<&'static str>) {
+    match os_family.trim().to_ascii_lowercase().as_str() {
+        "macos" | "darwin" => (
+            "/bin/launchctl",
+            vec!["kickstart", "-k", "system/org.nethserver.swm-agent"],
+        ),
+        "windows" => ("sc.exe", vec!["start", "NS8SoftwareManagerAgent"]),
+        _ => ("systemctl", vec!["restart", "swm-agent.service"]),
+    }
+}
+
+/// Schedules an asynchronous daemon restart ~2 seconds after `post_job_result` completes
+/// when running as an installed OS service (`launchd` on macOS, `systemd` on Linux).
+pub fn schedule_agent_service_restart() {
+    if std::env::var("SWM_DISABLE_SELF_RESTART")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if std::path::Path::new(crate::service::LAUNCHD_DAEMON_PLIST_PATH).exists() {
+            let _ = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "sleep 2; /bin/launchctl kickstart -k system/org.nethserver.swm-agent >/dev/null 2>&1",
+                ])
+                .spawn();
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if std::path::Path::new(crate::service::SYSTEMD_UNIT_PATH).exists() {
+            let _ = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "sleep 2; systemctl restart swm-agent.service >/dev/null 2>&1",
+                ])
+                .spawn();
+        }
+    }
+}
+
 /// Verifies `expected_sha256` and executable binary header of `staged_binary`,
 /// then performs an atomic swap of `target_binary` with `.old` backup & automatic rollback on error.
 pub fn stage_and_swap_binary(
@@ -23,13 +92,9 @@ pub fn stage_and_swap_binary(
         bail!("Self-update rejected: downloaded binary is truncated (< 4 bytes)");
     }
 
-    // Basic binary header sanity check (MZ for Windows PE, \x7fELF for Linux ELF, or #! script in tests)
+    // Basic binary header sanity check (PE, ELF, Mach-O / Universal Fat binary, or script in tests)
     let header = fs::read(staged_binary)?;
-    let valid_magic = header.starts_with(b"MZ")
-        || header.starts_with(b"\x7fELF")
-        || header.starts_with(b"#!")
-        || header.starts_with(b"@echo");
-    if !valid_magic {
+    if !has_valid_executable_magic(&header) {
         bail!("Self-update rejected: unrecognized executable header magic");
     }
 
@@ -105,5 +170,15 @@ mod tests {
         let backup = stage_and_swap_binary(&staged_new, &good_sha, &current_exe).unwrap();
         assert_eq!(fs::read(&current_exe).unwrap(), new_bytes);
         assert_eq!(fs::read(&backup).unwrap(), old_bytes);
+
+        // macOS Universal (Fat) and Mach-O 64-bit headers are accepted + launchctl restart command
+        assert!(has_valid_executable_magic(b"\xCA\xFE\xBA\xBE\x00\x00\x00\x02"));
+        assert!(has_valid_executable_magic(b"\xCF\xFA\xED\xFE\x0C\x00\x00\x01"));
+        let (prog, args) = build_self_update_restart_command("macos");
+        assert_eq!(prog, "/bin/launchctl");
+        assert_eq!(
+            args,
+            vec!["kickstart", "-k", "system/org.nethserver.swm-agent"]
+        );
     }
 }

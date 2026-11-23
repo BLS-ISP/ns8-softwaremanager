@@ -95,6 +95,7 @@ describe('Login, OS Patching, Job Log Viewer & Enrollment Views', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('KB5034441')
+    expect(wrapper.text()).toContain('Nur macOS (softwareupdate)')
     const excludeBtn = wrapper.findAll('button').find((b) => b.text().includes('Ausschließen'))
     expect(excludeBtn).toBeTruthy()
     await excludeBtn!.trigger('click')
@@ -196,5 +197,21 @@ describe('Login, OS Patching, Job Log Viewer & Enrollment Views', () => {
     await wrapper.get('[data-testid="tab-ansible-tok-1"]').trigger('click')
     expect(wrapper.text()).toContain('deploy-swm-agent.yml')
     expect(wrapper.text()).toContain('/etc/ns8-swm/config.json')
+
+    // Verify 5th rollout tab: macOS MDM (Jamf / Intune) idempotent pure-LF script
+    await wrapper.get('[data-testid="rollout-tab-mdm"]').trigger('click')
+    const mdmScript = wrapper.get('[data-testid="mdm-macos-script-preview"]').text()
+    expect(wrapper.text()).toContain('install-swm-mdm-macos.sh')
+    expect(mdmScript).toContain('/Library/Application Support/NS8-SoftwareManager/config.json')
+    expect(mdmScript).toContain('launchctl print system/org.nethserver.swm-agent')
+    expect(mdmScript).toContain(
+      "https://swm.lan/dl/install.sh?token=swm_tok_abc&headless=1&skip_if_enrolled=1",
+    )
+    expect(mdmScript.includes('\r\n')).toBe(false)
+
+    // Verify manual tab includes macOS Universal CLI commands
+    await wrapper.get('[data-testid="tab-manual-tok-1"]').trigger('click')
+    expect(wrapper.text()).toContain('macOS Universal CLI (swm-agent)')
+    expect(wrapper.text()).toContain('/Library/Application Support/NS8-SoftwareManager')
   })
 })

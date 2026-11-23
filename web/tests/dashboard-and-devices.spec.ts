@@ -18,7 +18,7 @@ describe('DashboardView & DevicesView', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
-          total_devices: 24,
+          total_devices: 30,
           online_devices: 19,
           pending_approval_devices: 3,
           reboot_required_devices: 4,
@@ -35,7 +35,7 @@ describe('DashboardView & DevicesView', () => {
               created_at: '2026-11-20T20:00:00Z',
             },
           ],
-          os_breakdown: { windows: 15, linux: 9 },
+          os_breakdown: { windows: 15, linux: 9, macos: 6 },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -50,13 +50,14 @@ describe('DashboardView & DevicesView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="kpi-total-devices"]').text()).toBe('24')
+    expect(wrapper.get('[data-testid="kpi-total-devices"]').text()).toBe('30')
     expect(wrapper.get('[data-testid="kpi-online-devices"]').text()).toContain('19 Online')
     expect(wrapper.get('[data-testid="kpi-compliance"]').text()).toBe('87.5%')
     expect(wrapper.get('[data-testid="kpi-critical-patches"]').text()).toBe('6')
     expect(wrapper.get('[data-testid="kpi-reboot-devices"]').text()).toContain('4')
     expect(wrapper.get('[data-testid="os-windows-count"]').text()).toBe('15')
     expect(wrapper.get('[data-testid="os-linux-count"]').text()).toBe('9')
+    expect(wrapper.get('[data-testid="os-macos-count"]').text()).toBe('6')
     expect(wrapper.find('[data-testid="pending-approval-banner"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="zero-devices-onboarding"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('srv-db01')
@@ -499,6 +500,83 @@ describe('DashboardView & DevicesView', () => {
       allow_self_service: false,
       allow_user_os_updates: false,
       silent_notifications: true,
+    })
+  })
+
+  it('auto-populates macos-universal SHA-256 and submits macOS agent self-update in PoliciesView', async () => {
+    const macSha = 'c'.repeat(64)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === '/api/v1/admin/self-update' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({ jobs_created: 4, job_ids: ['j-mac-1', 'j-mac-2'] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (url === '/api/v1/admin/agent-artifacts') {
+        return new Response(
+          JSON.stringify({
+            server_url: 'https://swm.lan',
+            version: '1.2.0',
+            artifacts: [
+              {
+                platform: 'macos-universal',
+                os_family: 'macos',
+                filename: 'swm-agent',
+                role: 'agent',
+                label: 'macOS Universal Agent',
+                available: true,
+                size_bytes: 9437184,
+                sha256: macSha,
+                download_path: '/dl/agents/macos-universal/swm-agent',
+                download_url: 'https://swm.lan/dl/agents/macos-universal/swm-agent',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    const router = createAppRouter(true)
+    await router.push('/policies')
+    await router.isReady()
+
+    const wrapper = mount(PoliciesView, {
+      global: { plugins: [router] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="self-update-os-family"]').setValue('macos')
+    await flushPromises()
+
+    expect(
+      (wrapper.get('[data-testid="self-update-download-url"]').element as HTMLInputElement).value,
+    ).toBe('/dl/agents/macos-universal/swm-agent')
+    expect(
+      (wrapper.get('[data-testid="self-update-sha256"]').element as HTMLInputElement).value,
+    ).toBe(macSha)
+
+    await wrapper.get('[data-testid="self-update-submit-btn"]').trigger('submit')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    const selfUpdateCalls = fetchMock.mock.calls.filter(
+      ([u, o]) => String(u) === '/api/v1/admin/self-update' && o?.method === 'POST',
+    )
+    expect(selfUpdateCalls.length).toBeGreaterThanOrEqual(1)
+    expect(JSON.parse(String(selfUpdateCalls[0][1]?.body))).toEqual({
+      version: '1.2.0',
+      os_family: 'macos',
+      sha256: macSha,
+      download_url: '/dl/agents/macos-universal/swm-agent',
+      target_group_ids: [],
+      target_device_ids: [],
+      respect_maintenance_window: true,
     })
   })
 })

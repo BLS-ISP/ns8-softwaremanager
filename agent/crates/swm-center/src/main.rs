@@ -9,7 +9,7 @@ use swm_center::bridge::{
     discover_ui_dist_dir, try_handoff_to_existing_instance, write_session_file, CenterBridgeState,
 };
 use swm_center::tray::{
-    dispatch_os_notification, launch_desktop_window, should_spawn_native_tray,
+    dispatch_native_notification, launch_desktop_window, should_spawn_native_tray,
     DesktopNotification, NativeTrayHandle, TrayMenuAction, TrayStateTracker,
 };
 use swm_common::{
@@ -172,7 +172,7 @@ async fn run_gui_and_tray(
                                 .map(|p| p.silent_notifications)
                                 .unwrap_or(false);
                             if !silent {
-                                dispatch_os_notification(&DesktopNotification {
+                                dispatch_native_notification(&DesktopNotification {
                                     title: "NS8 Software Center".to_string(),
                                     body: "Synchronisation mit dem NS8-Server wurde gestartet."
                                         .to_string(),
@@ -194,7 +194,7 @@ async fn run_gui_and_tray(
                 TrayMenuAction::CheckForUpdates => {
                     match send_ipc_request(&action_ipc, &IpcRequest::TriggerPendingUpdates).await {
                         Ok(resp) if resp.ok => {
-                            dispatch_os_notification(&DesktopNotification {
+                            dispatch_native_notification(&DesktopNotification {
                                 title: "NS8 Software Center".to_string(),
                                 body: "Update-Prüfung und Installation ausstehender Updates wurde gestartet."
                                     .to_string(),
@@ -205,7 +205,7 @@ async fn run_gui_and_tray(
                             let msg = resp
                                 .message
                                 .unwrap_or_else(|| "Keine ausstehenden Updates gefunden.".to_string());
-                            dispatch_os_notification(&DesktopNotification {
+                            dispatch_native_notification(&DesktopNotification {
                                 title: "NS8 Software Center".to_string(),
                                 body: msg,
                                 urgent: false,
@@ -267,7 +267,7 @@ async fn run_gui_and_tray(
                         *pguard = snap.desktop_policy.clone();
                     }
                     for note in tracker.evaluate_notifications(&snap, Utc::now().timestamp()) {
-                        dispatch_os_notification(&note);
+                        dispatch_native_notification(&note);
                         if let Some(tray) = poll_tray_handle.as_ref() {
                             if note.urgent {
                                 tray.show_balloon(note);

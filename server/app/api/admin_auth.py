@@ -171,6 +171,7 @@ async def dashboard_summary(
 
     win_count = sum(1 for d in devices if d.os_family == "windows")
     linux_count = sum(1 for d in devices if d.os_family == "linux")
+    macos_count = sum(1 for d in devices if d.os_family == "macos")
 
     compliant_count = 0
     pending_critical_patches = 0
@@ -210,5 +211,7 @@ async def dashboard_summary(
         patch_compliance_percent=compliance_pct,
         pending_critical_patches=pending_critical_patches,
         recent_jobs=recent_jobs,
-        os_breakdown=OsBreakdownOut(windows=win_count, linux=linux_count),
+        os_breakdown=OsBreakdownOut(
+            windows=win_count, linux=linux_count, macos=macos_count
+        ),
     )

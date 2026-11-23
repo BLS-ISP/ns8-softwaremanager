@@ -186,7 +186,14 @@ pub fn execute_system_reboot(data_dir: &Path, reason: &str) -> Result<()> {
             .status()?;
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/sbin/shutdown")
+            .args(["-r", "now"])
+            .status()?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::process::Command::new("systemctl")
             .arg("reboot")

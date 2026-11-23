@@ -3,6 +3,16 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.2.0] - 2026-11-23
+
+### Added
+- **Vollständiger nativer macOS-Support (`swm-agent`, `swm-center`, `server/`, `web/`, `ui/`, `agent/packaging/macos/`):**
+  - **macOS Universal Binaries (`arm64` Apple Silicon & `x86_64` Intel):** Automatisierter Multi-Target-Build (`aarch64-apple-darwin` + `x86_64-apple-darwin` via `lipo -create`) auf `macos-latest` in GitHub Actions und Auslieferung über `/dl/agents/macos-universal/{swm-agent,swm-center}` (inkl. Aliasen `macos`, `macos-arm64`, `macos-amd64` in `Containerfile.app`).
+  - **Nativer `launchd`-Daemon, App-Bundle & MDM-Bootstrap (`/dl/install.sh`):** Automatische Kernel-Erkennung (`uname -s == "Darwin"`) im Einzeiler-Installer und neuer **macOS MDM (Jamf / Intune)**-Rollout-Generator (`skip_if_enrolled=1`), Quarantäne-Bereinigung (`xattr -dr com.apple.quarantine`), System-`LaunchDaemon` (`/Library/LaunchDaemons/org.nethserver.swm-agent.plist`), Desktop-App-Bundle (`/Applications/NS8 Software Center.app`) sowie Benutzer-`LaunchAgent` (`/Library/LaunchAgents/org.nethserver.swm-center.plist`) mit Sofortstart in der aktiven Aqua-Sitzung und Session-Watchdog.
+  - **macOS-Inventar & Apple `softwareupdate` Patch-Management:** Auslesen von `sw_vers`, `IOPlatformUUID`, `/Applications/*.app/Contents/Info.plist`, `pkgutil --pkgs` und Homebrew-Paketen sowie Scannen, Ausschließen, Freigeben und Compliance-Bewertung offizieller macOS-Sicherheits- und Systemupdates über `softwareupdate -l` / `softwareupdate -i`.
+  - **macOS-Softwareverteilung & Detection Rules:** Unterstützung für **Homebrew Casks (`brew_cask`)**, **Homebrew Formulae (`brew`)** (ausgeführt unter dem unprivilegierten Homebrew-Eigentümer) sowie eigene macOS-Pakete (`.pkg`, `.dmg` inkl. Read-only-Mount/Copy/Detach, `.app.zip`, `.sh`) mit `app_bundle`- und `pkgutil`-Erkennungsregeln.
+  - **Gehärtetes `swm-center` & durchgängige Admin-/Cockpit-UI:** Fensterstart via `/usr/bin/open`, native macOS-Mitteilungen via `osascript`, Apple-OS-Badges, Dashboard-Verteilung, Filter, Agent-Self-Update für `macos` und Direkt-Download auf der NS8-Cockpit-Statusseite.
+
 ## [1.1.0] - 2026-11-23
 
 ### Added

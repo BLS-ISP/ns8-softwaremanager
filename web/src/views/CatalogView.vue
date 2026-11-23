@@ -115,7 +115,7 @@ onMounted(() => {
           Software-Katalog &amp; Paket-Repository
         </h1>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Native Paketmanager (WinGet, APT, DNF, Flatpak) und eigenes NS8-Repository mit SHA-256 &amp; Detection Rules
+          Native Paketmanager (WinGet, APT, DNF, Flatpak, Homebrew) und eigenes NS8-Repository mit SHA-256 &amp; Detection Rules
         </p>
       </div>
       <div class="flex items-center gap-2">
@@ -158,16 +158,19 @@ onMounted(() => {
 
       <select
         v-model="osFilter"
+        data-testid="catalog-os-filter"
         aria-label="Nach Plattform filtern"
         class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
       >
         <option value="">Alle Plattformen</option>
         <option value="windows">Windows</option>
         <option value="linux">Linux</option>
+        <option value="macos">macOS (Apple Silicon &amp; Intel)</option>
       </select>
 
       <select
         v-model="sourceFilter"
+        data-testid="catalog-source-filter"
         aria-label="Nach Paketquelle filtern"
         class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
       >
@@ -176,7 +179,9 @@ onMounted(() => {
         <option value="apt">APT</option>
         <option value="dnf">DNF</option>
         <option value="flatpak">Flatpak</option>
-        <option value="custom">Eigenes NS8-Paket (.msi/.exe/.deb/.rpm)</option>
+        <option value="brew_cask">Homebrew Cask (macOS .app)</option>
+        <option value="brew">Homebrew Formula (macOS CLI)</option>
+        <option value="custom">Eigenes NS8-Paket (.msi/.exe/.deb/.rpm/.pkg/.dmg)</option>
       </select>
     </div>
 
@@ -185,7 +190,7 @@ onMounted(() => {
       <EmptyState
         :icon="Package"
         title="Software-Katalog ist noch leer"
-        description="Fügen Sie ein WinGet-, APT-, DNF- oder Flatpak-Paket hinzu oder laden Sie einen eigenen Installer (.msi, .exe, .deb, .rpm) in das NS8-Repository hoch."
+        description="Fügen Sie ein WinGet-, APT-, DNF-, Flatpak- oder Homebrew-Paket hinzu oder laden Sie einen eigenen Installer (.msi, .exe, .deb, .rpm, .pkg, .dmg) in das NS8-Repository hoch."
       >
         <template #actions>
           <button

@@ -299,9 +299,18 @@ describe('Theme Toggle, Safe ConfirmDialog, ToastContainer & Responsive Shell UX
 
     const winBadge = mount(OsBadge, { props: { osFamily: 'windows', osName: 'Windows 11' } })
     const linBadge = mount(OsBadge, { props: { osFamily: 'linux', osName: 'Rocky Linux 9' } })
+    const macBadge = mount(OsBadge, { props: { osFamily: 'macos' } })
+    const darwinBadge = mount(OsBadge, {
+      props: { osFamily: 'darwin', osName: 'macOS Sequoia', osVersion: '15.1' },
+    })
     expect(winBadge.get('[data-testid="os-badge"]').attributes('data-os-family')).toBe('windows')
     expect(linBadge.get('[data-testid="os-badge"]').attributes('data-os-family')).toBe('linux')
+    expect(macBadge.get('[data-testid="os-badge"]').attributes('data-os-family')).toBe('macos')
+    expect(macBadge.text()).toBe('macOS')
+    expect(darwinBadge.get('[data-testid="os-badge"]').attributes('data-os-family')).toBe('macos')
+    expect(darwinBadge.text()).toBe('macOS Sequoia (15.1)')
     expect(winBadge.find('svg').exists()).toBe(true)
     expect(linBadge.find('svg').exists()).toBe(true)
+    expect(macBadge.find('svg').exists()).toBe(true)
   })
 })

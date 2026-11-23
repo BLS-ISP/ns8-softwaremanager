@@ -334,6 +334,7 @@ onMounted(() => {
         <option value="">Alle Betriebssysteme</option>
         <option value="windows">Windows</option>
         <option value="linux">Linux</option>
+        <option value="macos">macOS</option>
       </select>
 
       <select

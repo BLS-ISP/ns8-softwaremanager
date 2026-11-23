@@ -195,3 +195,38 @@ Diese Erweiterung schließt alle Manipulationslücken der Endbenutzer-App (`swm-
 - **Zweistufiger Session-Keep-Alive (OS-Task + Agent-Guardian):** Unter Windows kombiniert die Lösung einen systemweiten geplanten Task (`\NS8SoftwareCenterGuardian` für `S-1-5-32-545`, `MultipleInstances=IgnoreNew`) mit einer periodischen Prozessprüfung im `swm-agent`, die den Task bei beendetem `swm-center.exe` in aktiven Benutzersitzungen automatisch neu anstößt. Unter Linux übernimmt eine globale `systemd`-User-Unit (`/etc/systemd/user/ns8-swm-center.service`) mit `Restart=always` (`RestartSec=5`) den automatischen Neustart.
 - **Unterbrechungsfreie Live-Datenbankmigration (`ensure_schema_upgrades`):** Da produktive NS8-Instanzen bestehende PostgreSQL-Volumes nutzen, prüft der Server beim Start fehlende Spalten per SQLAlchemy-Inspektor und ergänzt sie idempotent (`ALTER TABLE ... ADD COLUMN`), ohne bestehende Daten zu gefährden.
 - **Kryptografisch signierte Fernbefehle:** Alle neuen Sofortaktionen (`force_sync`, `admin_notify`, `remote_reboot`) nutzen dieselbe kanonische `Ed25519`-Job-Signatur (`SignedJob`) wie Software- und Patch-Aufträge — der Agent führt keinen unautorisierten Befehl aus.
+
+
+---
+
+# Erweiterungsplan Phase 8 (v1.2.0): Vollständiger macOS-Support (Universal Binary, `launchd`, `softwareupdate` & Homebrew)
+
+## Überblick
+Diese Phase erweitert **NS8-SoftwareManager** um vollwertigen First-Class-Support für **macOS** (Apple Silicon `M1–M4 / arm64` und Intel `x86_64` über ein kombiniertes **Universal Binary**). Sowohl der privilegierte Hintergrunddienst (`swm-agent`), das gehärtete Endbenutzer-„NS8 Software Center“ (`swm-center`), das FastAPI-Backend inkl. Bootstrap-Installer und Katalog, die Admin-Web-Konsole (`web/`), die NS8-Cockpit-Statusseite (`ui/`) als auch die GitHub-Actions-CI/CD-Pipeline (`macos-latest` + `lipo`) unterstützen danach Windows, Linux und macOS einheitlich über denselben `Ed25519`-signierten Sicherheits- und Steuerungskanal.
+
+## Architekturentscheidungen (Phase 8)
+- **Echtes macOS Universal Binary (`lipo`: `arm64` + `x86_64`):** Da unser Rust-Workspace reines `rustls` ohne C-OpenSSL-Abhängigkeiten nutzt, kompiliert der GitHub-Actions-Runner (`macos-latest`) sowohl `aarch64-apple-darwin` als auch `x86_64-apple-darwin` und vereint beide per `lipo -create` zu je einem Universal Binary (`swm-agent` & `swm-center`). Vorteil: Ein einziges Artefakt und eine einzige `SHA-256`-Prüfsumme decken gemischte Intel- und Apple-Silicon-Flotten beim Rollout und beim zentralen Agent-Self-Update ab.
+- **Plattformgerechter Unix-IPC-Pfad (`/var/run/ns8-swm/ipc.sock`):** Da macOS kein `/run`-Verzeichnis besitzt, nutzt `#[cfg(target_os = "macos")]` `/var/run/ns8-swm/ipc.sock` (unter Linux bleibt `/run/ns8-swm/ipc.sock` für volle Rückwärtskompatibilität erhalten).
+- **Zweistufige `launchd`-Selbstheilung (`LaunchDaemon` + `LaunchAgent`):**
+  - `swm-agent` läuft als Root-Dienst über `/Library/LaunchDaemons/org.nethserver.swm-agent.plist` (`RunAtLoad = true`, `KeepAlive = true`, Datenverzeichnis `/Library/Application Support/NS8-SoftwareManager`).
+  - `swm-center` wird als App-Bundle unter `/Applications/NS8 Software Center.app` abgelegt und über `/Library/LaunchAgents/org.nethserver.swm-center.plist` (`LimitLoadToSessionType = Aqua`, `KeepAlive = true`) in jeder grafischen Benutzersitzung gestartet; zusätzlich stößt der `swm-agent`-Session-Watchdog bei aktivem `enforce_tray` einen abgebrochenen Agent per `launchctl kickstart -k gui/<uid>/org.nethserver.swm-center` erneut an.
+- **Sichere Homebrew-Ausführung ohne Root-Konflikt:** Da Homebrew die Ausführung als `root` verweigert, ermittelt `swm-agent` für `brew` / `brew_cask` automatisch das installierte Binary (`/opt/homebrew/bin/brew` bzw. `/usr/local/bin/brew`) sowie dessen unprivilegierten Eigentümer (`stat -f %Su`) und führt Paketbefehle per `sudo -u <owner> -H env NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1` aus.
+- **Gatekeeper-freier Enterprise-Rollout ohne Notarizing-Zwang:** Da das Bootstrap-Skript (`/dl/install.sh`) per `sudo` oder MDM-Root-Agent (Jamf, Intune, Mosyle) ausgeführt wird, entfernt es beim Installieren gezielt etwaige Quarantäne-Attribute (`xattr -dr com.apple.quarantine`) auf `/usr/local/bin/swm-*` und `/Applications/NS8 Software Center.app`.
+
+## Aufgabenübersicht (Phase 8)
+- **Task 29:** Backend-, Bootstrap- & IPC-Vertrag für `macos` (`server/`, `/dl/install.sh`, `swm-common`)
+- **Task 30:** macOS-Systeminventar, `launchd`-Dienststeuerung & Session-Watchdog in `swm-agent`
+- **Task 31:** macOS OS-Patching über Apples `softwareupdate` in `swm-agent` & Server
+- **Checkpoint (Tasks 29–31):** macOS-Agent kompiliert, inventarisiert, verwaltet `launchd` und scannt/installiert macOS-Systemupdates
+- **Task 32:** macOS Software-Deployment (`.pkg`, `.dmg`, `.app.zip`, `.sh` & Homebrew Formulae/Casks) + Detection Rules
+- **Task 33:** Gehärtetes `swm-center` auf macOS (App-Bundle, `open`-Integration, `osascript`-Benachrichtigungen & Session-Pfad)
+- **Task 34:** Admin-Web-Konsole (`web/`), NS8 Cockpit-UI (`ui/`) & Universal-Binary CI/CD (`macos-latest` + `lipo`)
+- **Finaler Checkpoint:** Alle Backend-, Frontend- und Rust-Tests grün (inkl. nativem macOS-CI-Testlauf) und Release `v1.2.0` bereit
+
+## Risiken & Gegenmaßnahmen (Phase 8)
+| Risiko | Auswirkung | Gegenmaßnahme |
+|---|---|---|
+| **Homebrew verweigert Ausführung unter `root` (`LaunchDaemon`)** | Hoch | Automatische Ermittlung des Besitzers der Homebrew-Installation (`/opt/homebrew` bzw. `/usr/local/Homebrew`) oder des aktiven Konsolenbenutzers und Ausführung via `sudo -u <user> -H` mit `NONINTERACTIVE=1`. |
+| **Fehlendes `/run`-Verzeichnis unter macOS bricht lokalen IPC-Socket** | Kritisch | `default_ipc_address()` liefert unter `target_os = "macos"` `/var/run/ns8-swm/ipc.sock`; `daemon.rs` legt `/var/run/ns8-swm` mit `0755` und Socket `0666` an. |
+| **Unterschiedliches Ausgabeformat von `softwareupdate -l` zwischen macOS-Versionen** | Mittel | Robuster zweistufiger Parser für sowohl das moderne Schlüssel-Wert-Format (`* Label:` / `Title: ..., Version: ..., Action: restart`) als auch ältere Zeilenformate, abgesichert durch Unit-Tests mit realen macOS-Fixtures. |
+| **Hängende `.dmg`-Mounts bei fehlerhaften Installern** | Mittel | Mount immer read-only und unsichtbar (`hdiutil attach -nobrowse -readonly -mountpoint <tempdir>`) mit garantiertem `hdiutil detach -force` im Cleanup-Pfad (Drop/Finally). |

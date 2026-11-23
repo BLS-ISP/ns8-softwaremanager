@@ -816,3 +816,181 @@ Diese Datei ist das zentrale Task-Tracking-Dokument gemäß `tasks/plan.md`. Jed
 - [x] Alle 6 Aufgaben (Tasks 23–28) erfüllt und abgehakt
 - [x] `pytest`, `vitest` (`web` & `swm-center/ui`) und `cargo test --workspace` laufen zu 100 % grün
 - [x] Bereit für Release `v1.1.0` auf GitHub/GHCR und `ns8-nethforge`
+
+
+---
+
+## Phase 8: Vollständiger macOS-Support (`v1.2.0` — Universal Binary, `launchd`, `softwareupdate` & Homebrew)
+
+## Task 29: Backend-, Bootstrap- & IPC-Vertrag für `macos` (`server/`, `/dl/install.sh`, `swm-common`)
+
+**Description:** Erweitert alle FastAPI-Schemas, Katalog-/Patch-/Self-Update-Endpunkte, Artefakt-Metadaten und das Unix-Bootstrap-Skript (`/dl/install.sh`) um `os_family = "macos"` (`macos-universal` sowie Aliase `macos-arm64` / `macos-amd64`) und stellt den Standard-IPC-Socket unter macOS in `swm-common` auf `/var/run/ns8-swm/ipc.sock` um.
+
+**Acceptance criteria:**
+- [x] `AgentEnrollRequest`, `CatalogItemCreate`/`Update`, `SelfUpdateRequest`, `OsBreakdownOut` und `KNOWN_AGENT_ARTIFACTS` unterstützen `os_family = "macos"` sowie die Katalog-Quelltypen `brew` und `brew_cask`.
+- [x] `GET /dl/install.sh` erkennt `uname -s == "Darwin"` automatisch, lädt die `macos-universal`-Binaries, entfernt Quarantäne-Attribute (`xattr -dr com.apple.quarantine`), richtet `/Library/LaunchDaemons/org.nethserver.swm-agent.plist` sowie bei `headless=0` `/Applications/NS8 Software Center.app` und `/Library/LaunchAgents/org.nethserver.swm-center.plist` inkl. Sofortstart in der aktiven Benutzersitzung ein.
+- [x] `swm-common::default_ipc_address()` liefert unter `target_os = "macos"` `/var/run/ns8-swm/ipc.sock` (Linux behält `/run/ns8-swm/ipc.sock`).
+
+**Verification:**
+- [x] Tests pass: `python -m pytest server/tests/test_macos_support.py` und `cargo test --manifest-path agent/Cargo.toml -p swm-common`
+- [x] Build succeeds: `cargo check --manifest-path agent/Cargo.toml --workspace`
+- [x] Manual check: Abruf von `/dl/install.sh?token=test&headless=0` enthält saubere LF-Zeilenenden und gültige Bash-Syntax (`bash -n`) für Linux- und Darwin-Zweig.
+
+**Dependencies:** None
+
+**Files likely touched:**
+- `server/app/schemas/api_schemas.py`
+- `server/app/api/admin_auth.py`
+- `server/app/api/admin_catalog_deployments.py`
+- `server/app/api/health_and_dl.py`
+- `agent/crates/swm-common/src/ipc.rs`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 30: macOS-Systeminventar, `launchd`-Dienststeuerung & Session-Watchdog in `swm-agent`
+
+**Description:** Rüstet `swm-agent` für den nativen Betrieb als macOS-Root-Daemon aus: Erkennung von macOS-Version/Build (`sw_vers`), Hardware-UUID (`IOPlatformUUID`), installiertem Software-Bestand (`/Applications/*.app`, `pkgutil`, `brew`), `launchd`-Service-Installation/-Deinstallation sowie Session-Watchdog für `swm-center`.
+
+**Acceptance criteria:**
+- [x] `detect_os_family()` liefert `"macos"` auf `target_os = "macos"`, liest Produktname/-version über `sw_vers`, ermittelt `IOPlatformUUID` als stabile `machine_uid` und nutzt `/Library/Application Support/NS8-SoftwareManager` als Standard-Datenverzeichnis.
+- [x] Software-Inventar unter macOS erfasst `/Applications/*.app/Contents/Info.plist`, `pkgutil --pkgs` sowie installierte Homebrew-Formulae und -Casks (`brew list --versions` / `--cask`).
+- [x] `service-install` / `service-uninstall` verwalten unter macOS `/Library/LaunchDaemons/org.nethserver.swm-agent.plist` (`KeepAlive = true`), und der Session-Watchdog startet `gui/<uid>/org.nethserver.swm-center` neu, falls `enforce_tray` aktiv ist und `swm-center` beendet wurde.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-agent`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml -p swm-agent`
+- [x] Manual check: Unit-Tests für `sw_vers`-, `Info.plist`-, `brew list`-Parser und `launchd`-Plist-Generierung bestehen plattformübergreifend.
+
+**Dependencies:** Task 29
+
+**Files likely touched:**
+- `agent/crates/swm-agent/src/inventory/system.rs`
+- `agent/crates/swm-agent/src/inventory/software.rs`
+- `agent/crates/swm-agent/src/inventory/reboot.rs`
+- `agent/crates/swm-agent/src/service.rs`
+- `agent/crates/swm-agent/src/daemon.rs`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 31: macOS OS-Patching über Apples `softwareupdate` in `swm-agent` & Server
+
+**Description:** Implementiert das Scannen und unbeaufsichtigte Installieren offizieller Apple-Betriebssystem- und Sicherheitsupdates über `softwareupdate -l` und `softwareupdate -i` inklusive Ausschlusslisten-Filterung und Reboot-Erkennung.
+
+**Acceptance criteria:**
+- [x] Neues Modul `patching/macos_update.rs` parst `softwareupdate -l` (modernes Label-/Key-Value-Format sowie klassisches Format) zuverlässig in `PendingOsUpdate`-Einträge (ID/Label, Titel, Version, Größe, Kategorie, `reboot_required`).
+- [x] Vom Administrator ausgeschlossene Update-IDs werden beim macOS-Patch-Lauf übersprungen; freigegebene Updates werden per `softwareupdate -i <label>` mit Live-Log-Streaming installiert und melden Neustart-Anforderungen (`Action: restart` / `restart`) an den `RebootManager`.
+- [x] `server/app/api/admin_patches.py` ordnet macOS-Updates sauber `os_family = "macos"` zu und berücksichtigt Macs in der Patch-Compliance-Quote.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-agent macos_update` und `python -m pytest server/tests/test_macos_support.py`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml -p swm-agent`
+- [x] Manual check: Fixture-Tests mit realen `softwareupdate -l`-Ausgaben (inkl. macOS Sonoma/Sequoia Security Responses & OS-Upgrades) laufen grün.
+
+**Dependencies:** Task 30
+
+**Files likely touched:**
+- `agent/crates/swm-agent/src/patching/mod.rs`
+- `agent/crates/swm-agent/src/patching/macos_update.rs`
+- `agent/crates/swm-agent/src/jobs/runner.rs`
+- `server/app/api/admin_patches.py`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Checkpoint: Nach Tasks 29–31 (macOS-Kernagent & OS-Patching komplett)
+- [x] `pytest` und `cargo test --workspace` laufen grün
+- [x] `swm-agent` unterstützt Enrollment, Inventar, `launchd`, IPC und `softwareupdate` unter macOS
+- [x] `/dl/install.sh` deckt Linux und macOS (Darwin) ab
+
+---
+
+## Task 32: macOS Software-Deployment (`.pkg`, `.dmg`, `.app.zip`, `.sh` & Homebrew) + Detection Rules
+
+**Description:** Baut den macOS-Software-Installer und die Detection-Engine in `swm-agent`: unterstützt eigene Pakete (`.pkg`, `.dmg` inkl. automatischem Mount/Copy/Unmount, `.zip` App-Bundles, `.sh`) sowie **Homebrew Formulae (`brew`) & Casks (`brew_cask`)** unter dem unprivilegierten Homebrew-Eigentümer.
+
+**Acceptance criteria:**
+- [x] `macos_installer.rs` installiert `.pkg` via `installer -pkg ... -target /`, mountet `.dmg`-Images unsichtbar/read-only (`hdiutil attach -nobrowse -readonly`), installiert enthaltene `.pkg` oder kopiert `.app` nach `/Applications` (inkl. `xattr -dr com.apple.quarantine`) und räumt den Mountpoint garantiert per `hdiutil detach -force` auf.
+- [x] Für `source_type` `brew` und `brew_cask` ermittelt `swm-agent` den nicht-`root` Besitzer von `/opt/homebrew` bzw. `/usr/local/Homebrew` und führt `install`, `upgrade` und `uninstall` sicher per `sudo -u <owner> -H env NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1` aus.
+- [x] `detection.rs` prüft macOS-Erkennungsregeln vom Typ `app_bundle` (`/Applications/<App>.app/Contents/Info.plist` inkl. `min_version`), `pkgutil` (`pkgutil --pkg-info`), `brew` / `brew_cask` und `file`.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-agent macos_installer` und `cargo test --manifest-path agent/Cargo.toml -p swm-agent detection`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml -p swm-agent`
+- [x] Manual check: Kommandopläne für `.pkg`, `.dmg`, `.app.zip`, `brew` und `brew_cask` sowie Versionsvergleiche in `Info.plist` sind per Unit-Test abgesichert.
+
+**Dependencies:** Task 30
+
+**Files likely touched:**
+- `agent/crates/swm-agent/src/software/mod.rs`
+- `agent/crates/swm-agent/src/software/macos_installer.rs`
+- `agent/crates/swm-agent/src/software/detection.rs`
+- `agent/crates/swm-agent/src/jobs/runner.rs`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 33: Gehärtetes `swm-center` auf macOS (App-Bundle, `open`, Native Notifications & Packaging)
+
+**Description:** Passt das Single-Binary Endbenutzer-„NS8 Software Center“ (`swm-center`) und die Packaging-Vorlagen an macOS an: Fensteröffnung über `/usr/bin/open`, native macOS-Mitteilungen über `osascript`, macOS-konformer Session-Lock-Pfad sowie fertige `LaunchDaemon`-/ `LaunchAgent`-Plists.
+
+**Acceptance criteria:**
+- [x] `launch_desktop_window()` öffnet das lokale Software-Center-Fenster unter macOS zuverlässig über `/usr/bin/open` (ohne `DISPLAY`/`WAYLAND_DISPLAY`-Abhängigkeit).
+- [x] `dispatch_native_notification()` sendet unter macOS echte Desktop-Mitteilungen über `osascript` (mit sauberem Escaping und Berücksichtigung von `silent_notifications` / dringenden Admin-Hinweisen).
+- [x] `default_session_file_path()` nutzt unter macOS `~/Library/Application Support/NS8-SoftwareManager/center-session.json` für den Single-Instance-Guard; Packaging-Vorlagen unter `agent/packaging/macos/` liegen mit reinen LF-Zeilenenden vor.
+
+**Verification:**
+- [x] Tests pass: `cargo test --manifest-path agent/Cargo.toml -p swm-center`
+- [x] Build succeeds: `cargo build --manifest-path agent/Cargo.toml -p swm-center`
+- [x] Manual check: AppleScript-Escaping-Tests und Packaging-Invarianten-Tests bestehen zu 100 %.
+
+**Dependencies:** Task 29
+
+**Files likely touched:**
+- `agent/crates/swm-center/src/tray.rs`
+- `agent/crates/swm-center/src/main.rs`
+- `agent/crates/swm-center/src/bridge.rs`
+- `agent/packaging/macos/org.nethserver.swm-agent.plist`
+- `agent/packaging/macos/org.nethserver.swm-center.plist`
+
+**Estimated scope:** Medium: 3-5 files
+
+---
+
+## Task 34: Admin-Web-Konsole (`web/`), NS8 Cockpit-UI (`ui/`) & Universal-Binary CI/CD (`macos-latest` + `lipo`)
+
+**Description:** Integriert macOS durchgängig in die Admin-Web-Konsole (`OsBadge`, Dashboard-Statistik, Geräte- & Patch-Filter, Katalog-Modal für `.pkg`/`.dmg`/`Homebrew`, Agent-Self-Update sowie macOS-MDM-Tab für Jamf/Intune/Mosyle im Rollout-Assistenten), ergänzt den Download-Link auf der NS8-Statusseite und erweitert GitHub Actions + `Containerfile.app` um den Bau und das Einbetten der macOS-Universal-Binaries.
+
+**Acceptance criteria:**
+- [x] `web/` unterstützt `macos` in `OsBadge.vue` (eigenes Apple/macOS-Icon), `DashboardView.vue`, `DevicesView.vue`, `PatchManagementView.vue`, `CatalogView.vue`, `PackageUploadModal.vue` (`brew`, `brew_cask`, `.pkg`, `.dmg`, `.zip` + `app_bundle`/`pkgutil`-Erkennungsregeln), `PoliciesView.vue` und `EnrollmentView.vue` (inkl. MDM-Skript-Generator für Jamf/Intune/Mosyle).
+- [x] `ui/src/views/Status.vue` (+ `de`/`en` Sprachdateien) bietet den Direkt-Download für macOS Universal unter Wahrung aller 5 NS8-Cockpit-UI-Regeln.
+- [x] `.github/workflows/build-and-test.yml` baut auf `macos-latest` beide Targets (`aarch64-apple-darwin` & `x86_64-apple-darwin`), führt `cargo test --workspace` nativ auf macOS aus, erzeugt per `lipo -create` Universal Binaries und bettet sie über `Containerfile.app` unter `/app/agents/macos-universal` (sowie `macos`, `macos-arm64`, `macos-amd64`) ein.
+
+**Verification:**
+- [x] Tests pass: `npm --prefix web test -- --run` und `python -m pytest server/tests -v`
+- [x] Build succeeds: `npm --prefix web run build` und `npm --prefix ui run build`
+- [x] Manual check: Alle CI-Workflows, Containerfiles und UI-Ansichten im Light- & Dark-Mode geprüft.
+
+**Dependencies:** Task 29, Task 31, Task 32, Task 33
+
+**Files likely touched:**
+- `web/src/components/OsBadge.vue`
+- `web/src/components/PackageUploadModal.vue`
+- `web/src/views/EnrollmentView.vue`
+- `web/src/views/DashboardView.vue`
+- `.github/workflows/build-and-test.yml`
+- `Containerfile.app`
+
+**Estimated scope:** Large: 6-8 files
+
+---
+
+## Finaler Checkpoint: Abschluss Phase 8 (`v1.2.0`)
+- [x] Alle 6 Aufgaben (Tasks 29–34) erfüllt und abgehakt
+- [x] `pytest`, `vitest` (`web` & `swm-center/ui`), `ui`-Build und `cargo test --workspace` laufen lokal und in GitHub Actions (`ubuntu-latest`, `windows-latest`, `macos-latest`) zu 100 % grün
+- [ ] Release `v1.2.0` veröffentlicht auf GHCR (`ghcr.io/bls-isp/softwaremanager:1.2.0`) und indiziert in `ns8-nethforge`

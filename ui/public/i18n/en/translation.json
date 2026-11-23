@@ -36,14 +36,18 @@
     "tls_default": "Default TLS",
     "local_only": "Local account",
     "onboarding_title": "Client Rollout & Agent Setup",
-    "onboarding_subtitle": "Windows and Linux endpoints can be onboarded through the rollout wizard at {url}/enrollment (one-line PowerShell/Bash, Active Directory GPO, or Ansible).",
-    "open_rollout_wizard": "Open Client Rollout"
+    "onboarding_subtitle": "Windows, Linux, and macOS endpoints can be onboarded through the rollout wizard at {url}/enrollment (one-line PowerShell/Bash, Active Directory GPO, Ansible, or macOS MDM).",
+    "open_rollout_wizard": "Open Client Rollout",
+    "agent_downloads": "Direct agent downloads",
+    "download_agent_windows": "Windows (x64)",
+    "download_agent_linux": "Linux (amd64)",
+    "download_agent_macos": "macOS Universal"
   },
   "settings": {
     "title": "Settings",
     "configure_instance": "Configure {instance}",
     "urls_info_title": "Web Console & Client Endpoint active",
-    "urls_info_desc": "The administration console and HTTPS/WSS endpoint for Windows and Linux clients are available at {url}.",
+    "urls_info_desc": "The administration console and HTTPS/WSS endpoint for Windows, Linux, and macOS clients are available at {url}.",
     "domain_name": "SoftwareManager hostname (FQDN)",
     "domain_name_placeholder": "swm.example.org",
     "domain_name_helper": "Clients and administrators connect to this HTTPS hostname on port 443 via NS8 Traefik.",

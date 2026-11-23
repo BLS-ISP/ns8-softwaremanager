@@ -56,6 +56,10 @@ export function formatSourceType(sourceType: SourceType): string {
       return 'DNF'
     case 'flatpak':
       return 'Flatpak'
+    case 'brew':
+      return 'Homebrew Formula'
+    case 'brew_cask':
+      return 'Homebrew Cask'
     case 'custom':
       return 'Eigenes Paket'
     default:

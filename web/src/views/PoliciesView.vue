@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   BellOff,
@@ -35,7 +35,7 @@ function normalizeGroupPolicies(grp: DeviceGroup): DeviceGroup {
 }
 
 // Agent Self-Update Form
-const agentVersion = ref('1.0.5')
+const agentVersion = ref('1.2.0')
 const agentOsFamily = ref<OsFamily>('windows')
 const agentDownloadUrl = ref('/dl/agents/windows/swm-agent.exe')
 const agentSha256 = ref('')
@@ -43,11 +43,19 @@ const targetGroupIds = ref<string[]>([])
 const respectMw = ref(true)
 const rollingOut = ref(false)
 
-const matchingBundledAgent = computed(() =>
-  artifacts.value.find(
+const matchingBundledAgent = computed(() => {
+  const candidates = artifacts.value.filter(
     (a) => a.role === 'agent' && a.os_family === agentOsFamily.value && a.available && a.sha256,
-  ),
-)
+  )
+  if (agentOsFamily.value === 'macos') {
+    return (
+      candidates.find((a) => a.platform === 'macos-universal' && a.filename === 'swm-agent') ||
+      candidates.find((a) => a.filename === 'swm-agent') ||
+      candidates[0]
+    )
+  }
+  return candidates[0]
+})
 
 function applyBundledAgentArtifact() {
   const found = matchingBundledAgent.value
@@ -64,12 +72,15 @@ async function loadGroups() {
       adminApi.listGroups(),
       adminApi.getAgentArtifacts().catch(() => ({
         server_url: '',
-        version: '1.0.5',
+        version: '1.2.0',
         artifacts: [],
       })),
     ])
     groups.value = grpList.map(normalizeGroupPolicies)
     artifacts.value = artMeta.artifacts || []
+    if (artMeta.version) {
+      agentVersion.value = artMeta.version
+    }
     if (matchingBundledAgent.value && !agentSha256.value) {
       agentSha256.value = matchingBundledAgent.value.sha256
       agentDownloadUrl.value = matchingBundledAgent.value.download_path
@@ -108,7 +119,9 @@ function onOsChange() {
   agentDownloadUrl.value =
     agentOsFamily.value === 'windows'
       ? '/dl/agents/windows/swm-agent.exe'
-      : '/dl/agents/linux-amd64/swm-agent'
+      : agentOsFamily.value === 'macos'
+        ? '/dl/agents/macos-universal/swm-agent'
+        : '/dl/agents/linux-amd64/swm-agent'
   if (matchingBundledAgent.value) {
     agentDownloadUrl.value = matchingBundledAgent.value.download_path
     agentSha256.value = matchingBundledAgent.value.sha256
@@ -116,6 +129,10 @@ function onOsChange() {
     agentSha256.value = ''
   }
 }
+
+watch(agentOsFamily, () => {
+  onOsChange()
+})
 
 async function handleSelfUpdate() {
   if (!agentVersion.value.trim()) {
@@ -172,7 +189,7 @@ onMounted(() => {
           </h2>
         </div>
         <span class="text-xs text-slate-500 dark:text-slate-400">
-          Wirkt auf zugeordnete Windows- &amp; Linux-Clients bei Status-Synchronisation
+          Wirkt auf zugeordnete Windows-, Linux- &amp; macOS-Clients bei Status-Synchronisation
         </span>
       </div>
 
@@ -410,11 +427,12 @@ onMounted(() => {
           <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Ziel-Plattform</label>
           <select
             v-model="agentOsFamily"
+            data-testid="self-update-os-family"
             class="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-            @change="onOsChange"
           >
             <option value="windows">Windows (swm-agent.exe)</option>
             <option value="linux">Linux (swm-agent)</option>
+            <option value="macos">macOS Universal (swm-agent)</option>
           </select>
         </div>
 
@@ -422,8 +440,9 @@ onMounted(() => {
           <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Neue Agent-Version *</label>
           <input
             v-model="agentVersion"
+            data-testid="self-update-version"
             type="text"
-            placeholder="1.0.1"
+            placeholder="1.2.0"
             class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
           />
         </div>
@@ -432,6 +451,7 @@ onMounted(() => {
           <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Download-Pfad / URL</label>
           <input
             v-model="agentDownloadUrl"
+            data-testid="self-update-download-url"
             type="text"
             class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"
           />
@@ -441,6 +461,7 @@ onMounted(() => {
           <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Erwarteter SHA-256-Hash (Hex)</label>
           <input
             v-model="agentSha256"
+            data-testid="self-update-sha256"
             type="text"
             placeholder="64-stellige SHA-256 Prüfsumme des neuen Agent-Binaries"
             class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"
@@ -481,6 +502,7 @@ onMounted(() => {
 
           <button
             type="submit"
+            data-testid="self-update-submit-btn"
             :disabled="rollingOut"
             class="rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
           >

@@ -69,7 +69,7 @@ async def test_linux_apt_dnf_security_patching_and_compliance_dashboard(
         await client.get("/api/v1/admin/dashboard/summary", headers=admin_headers)
     ).json()
     assert dash1["total_devices"] == 3
-    assert dash1["os_breakdown"] == {"windows": 1, "linux": 2}
+    assert dash1["os_breakdown"] == {"windows": 1, "linux": 2, "macos": 0}
     assert dash1["pending_critical_patches"] == 2
     assert dash1["patch_compliance_percent"] == 33.3
 

@@ -11,7 +11,7 @@ TIME_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 class HealthResponse(BaseModel):
     status: str = "ok"
-    version: str = "1.0.0"
+    version: str = "1.2.0"
     database: str = "connected"
 
 
@@ -42,6 +42,7 @@ class LoginResponse(BaseModel):
 class OsBreakdownOut(BaseModel):
     windows: int = 0
     linux: int = 0
+    macos: int = 0
 
 
 class JobOut(BaseModel):
@@ -368,8 +369,10 @@ class CatalogItemCreate(BaseModel):
     description: str = ""
     category: str = Field(default="General", max_length=128)
     icon_url: str = ""
-    os_family: Literal["windows", "linux"]
-    source_type: Literal["winget", "apt", "dnf", "flatpak", "custom"]
+    os_family: Literal["windows", "linux", "macos"]
+    source_type: Literal[
+        "winget", "apt", "dnf", "flatpak", "brew", "brew_cask", "custom"
+    ]
     package_ref: str = Field(default="", max_length=255)
     install_args: str = ""
     uninstall_args: str = ""
@@ -397,8 +400,10 @@ class CatalogItemUpdate(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = Field(default=None, max_length=128)
     icon_url: Optional[str] = None
-    os_family: Optional[Literal["windows", "linux"]] = None
-    source_type: Optional[Literal["winget", "apt", "dnf", "flatpak", "custom"]] = None
+    os_family: Optional[Literal["windows", "linux", "macos"]] = None
+    source_type: Optional[
+        Literal["winget", "apt", "dnf", "flatpak", "brew", "brew_cask", "custom"]
+    ] = None
     package_ref: Optional[str] = Field(default=None, max_length=255)
     install_args: Optional[str] = None
     uninstall_args: Optional[str] = None
@@ -480,7 +485,7 @@ class DeploymentOut(BaseModel):
 
 class SelfUpdateRequest(BaseModel):
     version: str = Field(..., min_length=1, max_length=64)
-    os_family: Optional[Literal["windows", "linux"]] = None
+    os_family: Optional[Literal["windows", "linux", "macos"]] = None
     sha256: str = ""
     download_url: Optional[str] = None
     target_group_ids: list[str] = Field(default_factory=list)
@@ -489,6 +494,17 @@ class SelfUpdateRequest(BaseModel):
 
 
 # --- Agent Wire DTOs ---
+
+
+def normalize_os_family_str(v: str) -> str:
+    norm = v.strip().lower()
+    if norm in ("win", "windows", "win32", "win64"):
+        return "windows"
+    if norm in ("linux", "gnu/linux", "debian", "ubuntu", "rhel", "fedora"):
+        return "linux"
+    if norm in ("mac", "macos", "darwin", "osx", "mac os x"):
+        return "macos"
+    return norm
 
 
 class AgentEnrollRequest(BaseModel):
@@ -506,13 +522,9 @@ class AgentEnrollRequest(BaseModel):
     @field_validator("os_family")
     @classmethod
     def normalize_os_family(cls, v: str) -> str:
-        norm = v.strip().lower()
-        if norm in ("win", "windows", "win32", "win64"):
-            return "windows"
-        if norm in ("linux", "gnu/linux", "debian", "ubuntu", "rhel", "fedora"):
-            return "linux"
-        if norm not in ("windows", "linux"):
-            raise ValueError("os_family must be 'windows' or 'linux'")
+        norm = normalize_os_family_str(v)
+        if norm not in ("windows", "linux", "macos"):
+            raise ValueError("os_family must be 'windows', 'linux', or 'macos'")
         return norm
 
 

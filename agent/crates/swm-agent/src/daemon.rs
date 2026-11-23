@@ -5,6 +5,7 @@ use crate::inventory::build_inventory_report;
 use crate::ipc::{serve_ipc_endpoint, AgentIpcInner, SharedAgentIpcContext};
 use crate::jobs::runner::{verify_and_execute_job, JobExecutionContext};
 use crate::patching::linux_pkg::scan_linux_os_updates;
+use crate::patching::macos_update::scan_macos_os_updates;
 use crate::patching::reboot_manager::{execute_system_reboot, RebootManager};
 use crate::patching::windows_wua::{PowerShellWuaProvider, WuaProvider};
 use crate::transport::api_client::{AgentApiClient, DeviceAuthStatus};
@@ -171,10 +172,16 @@ pub async fn run_sync_cycle(
     let pending_os_updates = if passive_os_scan
         || std::env::var("SWM_MOCK_WUA_JSON").is_ok()
         || std::env::var("SWM_MOCK_LINUX_UPDATES_JSON").is_ok()
+        || std::env::var("SWM_MOCK_MACOS_UPDATES_JSON").is_ok()
+        || std::env::var("SWM_MOCK_MACOS_UPDATES_OUTPUT").is_ok()
     {
         if cfg!(windows) {
             PowerShellWuaProvider
                 .scan(&excluded_updates, Duration::from_secs(8))
+                .await
+                .unwrap_or_default()
+        } else if cfg!(target_os = "macos") {
+            scan_macos_os_updates(&excluded_updates)
                 .await
                 .unwrap_or_default()
         } else {
@@ -214,6 +221,15 @@ pub async fn run_sync_cycle(
             .creation_flags(CREATE_NO_WINDOW)
             .args(["/Run", "/TN", r"\NS8SoftwareCenterGuardian"])
             .output();
+    }
+
+    #[cfg(target_os = "macos")]
+    if desktop_policy.enforce_tray
+        && !collected.report.logged_in_users.is_empty()
+        && !collected.report.center_running
+        && std::env::var("SWM_DISABLE_WATCHDOG").ok().as_deref() != Some("1")
+    {
+        revive_macos_center_session(&collected.report.logged_in_users);
     }
 
     let inv_ack = api.post_inventory(&collected.report).await?;
@@ -349,6 +365,63 @@ pub async fn run_sync_cycle(
     Ok(CycleOutcome::Completed { jobs_executed })
 }
 
+#[cfg(target_os = "macos")]
+fn revive_macos_center_session(logged_in_users: &[String]) {
+    use crate::service::{macos_watchdog_launchctl_commands, LAUNCHD_CENTER_PLIST_PATH};
+    use crate::software::macos_installer::is_valid_non_root_macos_user;
+
+    let mut active_user = std::process::Command::new("/usr/bin/stat")
+        .args(["-f", "%Su", "/dev/console"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|u| is_valid_non_root_macos_user(u));
+
+    if active_user.is_none() {
+        active_user = logged_in_users
+            .iter()
+            .find(|u| is_valid_non_root_macos_user(u))
+            .cloned();
+    }
+
+    let Some(user) = active_user else {
+        return;
+    };
+
+    let Ok(id_out) = std::process::Command::new("/usr/bin/id")
+        .args(["-u", &user])
+        .output()
+    else {
+        return;
+    };
+    if !id_out.status.success() {
+        return;
+    }
+    let Ok(uid) = String::from_utf8_lossy(&id_out.stdout).trim().parse::<u32>() else {
+        return;
+    };
+    if uid == 0 {
+        return;
+    }
+
+    let (kick_args, boot_args) = macos_watchdog_launchctl_commands(uid);
+    let kicked = std::process::Command::new("/bin/launchctl")
+        .args(&kick_args)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !kicked && Path::new(LAUNCHD_CENTER_PLIST_PATH).exists() {
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(&boot_args)
+            .status();
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(&kick_args)
+            .status();
+    }
+}
+
 /// Runs a single `--once` synchronization cycle (ideal for CLI & deterministic E2E testing).
 pub async fn run_once(data_dir: PathBuf) -> Result<CycleOutcome> {
     let config = AgentConfig::load(&data_dir)?;
@@ -386,6 +459,23 @@ pub async fn run_daemon_loop(
         ws_connected.clone(),
         Some(ws_log_tx),
     )?;
+
+    // Ensure parent directory of Unix IPC socket (e.g. `/var/run/ns8-swm/ipc.sock`) exists with mode 0755
+    #[cfg(unix)]
+    {
+        let sock_raw = ipc_addr
+            .trim()
+            .strip_prefix("unix:")
+            .unwrap_or(ipc_addr.trim());
+        if sock_raw.starts_with('/') {
+            if let Some(parent) = Path::new(sock_raw).parent() {
+                if std::fs::create_dir_all(parent).is_ok() {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755));
+                }
+            }
+        }
+    }
 
     // Start local IPC server for unprivileged Software Center (`swm-center`)
     let ipc_ctx = shared.clone();

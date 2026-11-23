@@ -1,7 +1,7 @@
 name: "ns8-swm-agent"
 arch: "amd64"
 platform: "linux"
-version: "1.1.0"
+version: "1.2.0"
 section: "admin"
 priority: "optional"
 maintainer: "BLS-ISP <info@bls-isp.de>"

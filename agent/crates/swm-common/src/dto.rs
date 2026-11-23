@@ -239,10 +239,18 @@ pub struct DetectionRule {
     pub registry_key: Option<String>,
     #[serde(default, alias = "value")]
     pub value_name: Option<String>,
-    #[serde(default, alias = "package_id", alias = "package_ref")]
+    #[serde(default, alias = "package_ref")]
     pub package_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
     #[serde(default, alias = "expected_version")]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
     #[serde(default, alias = "version_operator")]
     pub operator: Option<String>,
 }
@@ -250,6 +258,29 @@ pub struct DetectionRule {
 impl DetectionRule {
     pub fn is_empty(&self) -> bool {
         self.rule_type.trim().is_empty()
+    }
+
+    /// Resolves the target package / formula / cask / receipt identifier across wire aliases.
+    pub fn effective_package(&self) -> Option<&str> {
+        [
+            self.package.as_deref(),
+            self.package_id.as_deref(),
+            self.package_name.as_deref(),
+            self.path.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+    }
+
+    /// Resolves the expected or minimum version across `min_version` and `version`.
+    pub fn effective_version(&self) -> Option<&str> {
+        [self.min_version.as_deref(), self.version.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
     }
 }
 

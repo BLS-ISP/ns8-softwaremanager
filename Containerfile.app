@@ -63,9 +63,25 @@ COPY server/ /app/server/
 COPY --from=web-builder /web/dist /app/web/dist
 COPY --from=agent-builder /out/ /app/agents/
 COPY prebuilt-agents/windows/ /app/agents/windows/
+# Stage prebuilt-agents/macos-universal/ when present (keeps local builds without prebuilt macOS artifacts non-fatal)
+COPY prebuilt-agents/ /tmp/prebuilt-agents/
 
 RUN useradd --create-home --uid 1001 swm && \
-    mkdir -p /data /app/agents/linux /app/agents/linux-amd64 /app/agents/windows && \
+    mkdir -p /data /app/agents/linux /app/agents/linux-amd64 /app/agents/windows \
+             /app/agents/macos-universal /app/agents/macos /app/agents/macos-arm64 /app/agents/macos-amd64 && \
+    if [ -d /tmp/prebuilt-agents/macos-universal ]; then \
+        cp -a /tmp/prebuilt-agents/macos-universal/. /app/agents/macos-universal/ 2>/dev/null || true; \
+    fi && \
+    for bin in swm-agent swm-center; do \
+        if [ -f "/app/agents/macos-universal/${bin}" ]; then \
+            chmod 0755 "/app/agents/macos-universal/${bin}" && \
+            cp "/app/agents/macos-universal/${bin}" "/app/agents/macos/${bin}" && \
+            cp "/app/agents/macos-universal/${bin}" "/app/agents/macos-arm64/${bin}" && \
+            cp "/app/agents/macos-universal/${bin}" "/app/agents/macos-amd64/${bin}" && \
+            chmod 0755 "/app/agents/macos/${bin}" "/app/agents/macos-arm64/${bin}" "/app/agents/macos-amd64/${bin}"; \
+        fi; \
+    done && \
+    rm -rf /tmp/prebuilt-agents && \
     chown -R swm:swm /app /data
 
 USER swm

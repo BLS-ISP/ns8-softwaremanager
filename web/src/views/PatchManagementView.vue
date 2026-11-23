@@ -146,7 +146,7 @@ onMounted(() => {
           Betriebssystem-Update-Management (OS Patching)
         </h1>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Windows Update Agent (WUA / KB-Steuerung ohne WSUS) sowie Linux APT &amp; DNF Sicherheits-Upgrades
+          Windows Update Agent (WUA / KB-Steuerung ohne WSUS), Linux APT &amp; DNF sowie Apple macOS <code class="font-mono text-xs">softwareupdate</code>
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -191,9 +191,10 @@ onMounted(() => {
         aria-label="Nach Betriebssystem filtern"
         class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
       >
-        <option value="">Windows &amp; Linux</option>
+        <option value="">Windows, Linux &amp; macOS</option>
         <option value="windows">Nur Windows (WUA / KB)</option>
         <option value="linux">Nur Linux (APT / DNF)</option>
+        <option value="macos">Nur macOS (softwareupdate)</option>
       </select>
 
       <select

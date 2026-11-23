@@ -46,10 +46,23 @@ pub struct DismissMessagePayload {
     pub message_id: String,
 }
 
+/// Resolves the macOS per-user session lock file under `$HOME/Library/Application Support/NS8-SoftwareManager/center-session.json`.
+pub fn resolve_macos_session_file_path(home_dir: Option<&str>, uid_fallback: &str) -> PathBuf {
+    if let Some(home) = home_dir.map(str::trim).filter(|h| !h.is_empty()) {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("NS8-SoftwareManager")
+            .join("center-session.json");
+    }
+    PathBuf::from(format!("/tmp/ns8-swm-center-{uid_fallback}.json"))
+}
+
 /// Resolves the per-user Single-Instance session file location:
 /// - Override via `SWM_CENTER_SESSION_FILE` (for isolated tests)
 /// - Windows: `%LOCALAPPDATA%\NS8-SoftwareManager\center-session.json`
-/// - Unix: `$XDG_RUNTIME_DIR/ns8-swm-center.json` or `/tmp/ns8-swm-center-<uid>.json`
+/// - macOS: `$HOME/Library/Application Support/NS8-SoftwareManager/center-session.json`
+/// - Linux: `$XDG_RUNTIME_DIR/ns8-swm-center.json` or `/tmp/ns8-swm-center-<uid>.json`
 pub fn default_session_file_path() -> PathBuf {
     if let Ok(override_path) = std::env::var("SWM_CENTER_SESSION_FILE") {
         let trimmed = override_path.trim();
@@ -81,7 +94,13 @@ pub fn default_session_file_path() -> PathBuf {
             .join("center-session.json")
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").ok();
+        resolve_macos_session_file_path(home.as_deref(), &detect_unix_uid())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
             if !xdg.trim().is_empty() {
@@ -103,6 +122,14 @@ fn detect_unix_uid() -> String {
                         return uid_tok.to_string();
                     }
                 }
+            }
+        }
+    }
+    if let Ok(out) = std::process::Command::new("id").arg("-u").output() {
+        if out.status.success() {
+            let uid_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !uid_str.is_empty() && uid_str.chars().all(|c| c.is_ascii_digit()) {
+                return uid_str;
             }
         }
     }
@@ -733,6 +760,8 @@ mod tests {
             "swm-agent.service",
             "swm-center.desktop",
             "nfpm.yaml",
+            "macos/org.nethserver.swm-agent.plist",
+            "macos/org.nethserver.swm-center.plist",
         ] {
             let raw = fs::read(pkg_dir.join(lf_file)).unwrap();
             assert!(
@@ -740,6 +769,13 @@ mod tests {
                 "CRLF detected in packaging/{lf_file}"
             );
         }
+
+        let agent_plist =
+            fs::read_to_string(pkg_dir.join("macos/org.nethserver.swm-agent.plist")).unwrap();
+        assert!(agent_plist.contains("<string>org.nethserver.swm-agent</string>"));
+        let center_plist =
+            fs::read_to_string(pkg_dir.join("macos/org.nethserver.swm-center.plist")).unwrap();
+        assert!(center_plist.contains("<string>org.nethserver.swm-center</string>"));
 
         let sh = fs::read_to_string(pkg_dir.join("install.sh")).unwrap();
         assert!(sh.contains("/etc/xdg/autostart/swm-center.desktop"));
@@ -791,5 +827,16 @@ mod tests {
         // 4. Secondary interactive call (tray_only=false) detects running instance AND calls POST /api/open-window
         assert!(try_handoff_to_existing_instance(&session_file, false, true).await);
         assert_eq!(open_counter.load(Ordering::SeqCst), 1);
+
+        // 5. macOS session lock path resolves under $HOME/Library/Application Support/NS8-SoftwareManager/center-session.json
+        let mac_session = resolve_macos_session_file_path(Some("/Users/alice"), "501");
+        assert_eq!(
+            mac_session,
+            PathBuf::from("/Users/alice")
+                .join("Library")
+                .join("Application Support")
+                .join("NS8-SoftwareManager")
+                .join("center-session.json")
+        );
     }
 }

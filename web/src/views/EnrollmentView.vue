@@ -6,6 +6,7 @@ import {
   Download,
   FileCode2,
   KeyRound,
+  Laptop,
   Layers,
   Monitor,
   Plus,
@@ -21,9 +22,10 @@ import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import EnrollmentTokenModal from '@/components/EnrollmentTokenModal.vue'
+import OsBadge from '@/components/OsBadge.vue'
 import { applyHeadlessToggle, formatBytes, formatDateTime } from '@/utils/format'
 
-type RolloutTab = 'quick' | 'gpo' | 'ansible' | 'manual'
+type RolloutTab = 'quick' | 'gpo' | 'ansible' | 'mdm' | 'manual'
 
 const toast = useToast()
 
@@ -111,6 +113,27 @@ function buildAnsiblePlaybook(tok: EnrollmentToken): string {
   ].join('\n')
 }
 
+function buildMacosMdmScript(tok: EnrollmentToken): string {
+  const origin = extractTokenOrigin(tok)
+  const hl = headlessMode.value ? 1 : 0
+  const bootstrapUrl = `${origin}/dl/install.sh?token=${tok.token}&headless=${hl}&skip_if_enrolled=1`
+  return [
+    '#!/bin/bash',
+    '# NS8-SoftwareManager - Idempotentes Root-MDM-Skript für Jamf Pro / Microsoft Intune / Kandji / Mosyle',
+    '# Ausführungskontext: root (macOS Universal: Apple Silicon arm64 & Intel x86_64)',
+    'set -euo pipefail',
+    '',
+    'DATA_CONFIG="/Library/Application Support/NS8-SoftwareManager/config.json"',
+    'if [ -f "${DATA_CONFIG}" ] && launchctl print system/org.nethserver.swm-agent >/dev/null 2>&1; then',
+    '    echo "NS8-SoftwareManager Agent ist bereits registriert und aktiv."',
+    '    exit 0',
+    'fi',
+    '',
+    `curl -fsSL '${bootstrapUrl}' | bash`,
+    '',
+  ].join('\n')
+}
+
 function buildManualWinSnippet(tok: EnrollmentToken): string {
   const origin = extractTokenOrigin(tok)
   const lines = [
@@ -137,6 +160,24 @@ function buildManualLinuxSnippet(tok: EnrollmentToken): string {
   ].join('\n')
 }
 
+function buildManualMacosSnippet(tok: EnrollmentToken): string {
+  const origin = extractTokenOrigin(tok)
+  const lines = [
+    '# Universal Binary (Apple Silicon & Intel) nach /usr/local/bin/swm-agent kopieren (chmod 0755):',
+    'sudo xattr -dr com.apple.quarantine /usr/local/bin/swm-agent 2>/dev/null || true',
+    'sudo mkdir -p "/Library/Application Support/NS8-SoftwareManager" /var/run/ns8-swm',
+    `sudo /usr/local/bin/swm-agent enroll --server "${origin}" --token "${tok.token}" --data-dir "/Library/Application Support/NS8-SoftwareManager"`,
+    'sudo /usr/local/bin/swm-agent service-install --data-dir "/Library/Application Support/NS8-SoftwareManager"',
+  ]
+  if (!headlessMode.value) {
+    lines.push(
+      '# Optional Desktop-Tray & App-Bundle (/Applications/NS8 Software Center.app):',
+      'sudo launchctl bootstrap "gui/$(id -u)" /Library/LaunchAgents/org.nethserver.swm-center.plist',
+    )
+  }
+  return lines.join('\n')
+}
+
 function downloadTextFile(filename: string, content: string, mimeType = 'text/plain;charset=utf-8') {
   if (typeof document === 'undefined' || typeof URL === 'undefined') return
   const blob = new Blob([content], { type: mimeType })
@@ -159,7 +200,7 @@ async function loadAll() {
       adminApi.listGroups(),
       adminApi.getAgentArtifacts().catch(() => ({
         server_url: '',
-        version: '1.0.0',
+        version: '1.2.0',
         artifacts: [],
       })),
     ])
@@ -192,7 +233,7 @@ async function createQuickStartToken() {
     tokens.value = [created, ...tokens.value]
     toast.success(
       'Schnellstart-Token erstellt',
-      'Kopieren Sie nun den passenden Einzeiler oder laden Sie das GPO-/Ansible-Skript herunter.',
+      'Kopieren Sie nun den passenden Einzeiler oder laden Sie das GPO-, Ansible- oder macOS-MDM-Skript herunter.',
     )
   } catch (err) {
     toast.error('Token-Erstellung fehlgeschlagen', err instanceof Error ? err.message : undefined)
@@ -252,11 +293,18 @@ onMounted(() => {
     <!-- Page Header & Workstation/Server Profile Switch -->
     <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-          Client-Rollout &amp; Agent-Installation
-        </h1>
+        <div class="flex flex-wrap items-center gap-2">
+          <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
+            Client-Rollout &amp; Agent-Installation
+          </h1>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <OsBadge os-family="windows" />
+            <OsBadge os-family="linux" />
+            <OsBadge os-family="macos" os-name="macOS Universal" />
+          </div>
+        </div>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          So installieren Sie den Hintergrund-Agenten (<code class="font-mono text-xs">swm-agent</code>) und das Endbenutzer-Software-Center (<code class="font-mono text-xs">swm-center</code>) auf Windows- &amp; Linux-Systemen
+          So installieren Sie den Hintergrund-Agenten (<code class="font-mono text-xs">swm-agent</code>) und das Endbenutzer-Software-Center (<code class="font-mono text-xs">swm-center</code>) auf Windows-, Linux- &amp; macOS-Systemen
         </p>
       </div>
 
@@ -325,7 +373,7 @@ onMounted(() => {
               </span>
             </div>
             <p class="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              Läuft dauerhaft im Hintergrund als privilegierter Dienst (<code class="font-mono">NS8SoftwareManagerAgent</code> unter Windows bzw. <code class="font-mono">swm-agent.service</code> unter Linux). Verbindet sich <strong>ausschließlich ausgehend per HTTPS/WSS (Port 443)</strong> mit <code class="font-mono text-slate-800 dark:text-slate-200">{{ resolvedServerUrl }}</code>, überträgt Inventar &amp; Patch-Stand und führt Ed25519-signierte Aufträge aus.
+              Läuft dauerhaft als privilegierter Hintergrunddienst (<code class="font-mono">NS8SoftwareManagerAgent</code> unter Windows, <code class="font-mono">systemd</code> <code class="font-mono">swm-agent.service</code> unter Linux sowie <code class="font-mono">launchd</code> LaunchDaemon <code class="font-mono">org.nethserver.swm-agent</code> unter macOS Universal). Verbindet sich <strong>ausschließlich ausgehend per HTTPS/WSS (Port 443)</strong> mit <code class="font-mono text-slate-800 dark:text-slate-200">{{ resolvedServerUrl }}</code>.
             </p>
           </div>
         </div>
@@ -357,11 +405,11 @@ onMounted(() => {
                     : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400'
                 "
               >
-                {{ !headlessMode ? 'Wird mitinstalliert (Startmenü & Tray)' : 'Im Headless-Modus übersprungen' }}
+                {{ !headlessMode ? 'Wird mitinstalliert (Tray, Menü & .app)' : 'Im Headless-Modus übersprungen' }}
               </span>
             </div>
             <p class="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              Wird auf Arbeitsplatzrechnern automatisch ins <strong>Windows-Startmenü &amp; System-Tray</strong> bzw. ins <strong>Linux-Anwendungsmenü</strong> eingetragen. Mitarbeiter öffnen darüber den Self-Service-Katalog und installieren freigegebene Programme (<em>Verfügbar</em>) <strong>ohne lokale Administratorrechte</strong> über eine abgesicherte lokale IPC-Verbindung zum Dienst.
+              Wird auf Arbeitsplatzrechnern automatisch ins <strong>Windows-Startmenü &amp; System-Tray</strong>, ins <strong>Linux-Anwendungsmenü</strong> bzw. unter macOS als <code class="font-mono">/Applications/NS8 Software Center.app</code> samt Aqua-<code class="font-mono">LaunchAgent</code> eingerichtet. Mitarbeiter installieren freigegebene Programme <strong>ohne lokale Administratorrechte</strong> über lokale IPC.
             </p>
           </div>
         </div>
@@ -373,7 +421,7 @@ onMounted(() => {
       <EmptyState
         :icon="KeyRound"
         title="Schritt 1: Erstellen Sie ein Enrollment-Token für Ihre Clients"
-        description="Mit einem Enrollment-Token generiert der Server sofort kopierfertige PowerShell- und Bash-Einzeiler sowie herunterladbare Active-Directory-GPO-Startskripte (.ps1) und Ansible-Playbooks (.yml)."
+        description="Mit einem Enrollment-Token generiert der Server sofort kopierfertige PowerShell- und Bash-Einzeiler sowie herunterladbare AD-GPO-Startskripte (.ps1), Ansible-Playbooks (.yml) und macOS-MDM-Skripte (.sh)."
       >
         <template #actions>
           <button
@@ -398,7 +446,7 @@ onMounted(() => {
       </EmptyState>
     </div>
 
-    <!-- Token Cards with 4 Scenario Rollout Tabs -->
+    <!-- Token Cards with 5 Scenario Rollout Tabs -->
     <div v-else class="space-y-5">
       <div
         v-for="tok in tokens"
@@ -493,6 +541,22 @@ onMounted(() => {
 
           <button
             type="button"
+            data-testid="rollout-tab-mdm"
+            :data-token-id="tok.id"
+            class="inline-flex items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-xs font-semibold transition"
+            :class="
+              getActiveTab(tok.id) === 'mdm'
+                ? 'border-sky-600 bg-white text-sky-700 dark:border-sky-400 dark:bg-slate-900 dark:text-sky-300'
+                : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+            "
+            @click="setActiveTab(tok.id, 'mdm')"
+          >
+            <Laptop class="h-3.5 w-3.5" aria-hidden="true" />
+            macOS MDM (Jamf / Intune)
+          </button>
+
+          <button
+            type="button"
             :data-testid="`tab-manual-${tok.id}`"
             class="inline-flex items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-xs font-semibold transition"
             :class="
@@ -510,7 +574,7 @@ onMounted(() => {
         <!-- Tab 1: Quick Interactive One-Liners -->
         <div v-if="getActiveTab(tok.id) === 'quick'" class="space-y-3 p-5">
           <p class="text-xs text-slate-600 dark:text-slate-400">
-            Öffnen Sie auf dem Zielrechner eine <strong>Administrator-PowerShell</strong> (Windows) bzw. ein <strong>Root-/Sudo-Terminal</strong> (Linux) und führen Sie den Einzeiler aus. Der Rechner erscheint sofort unter <strong>Geräte &amp; Flotte</strong>.
+            Öffnen Sie auf dem Zielrechner eine <strong>Administrator-PowerShell</strong> (Windows) bzw. ein <strong>Root-/Sudo-Terminal</strong> (Linux &amp; macOS). Das Bootstrap-Skript <code class="font-mono">install.sh</code> erkennt automatisch via <code class="font-mono">uname -s</code>, ob <strong>Linux</strong> (<code class="font-mono">systemd</code>) oder <strong>macOS Universal (Apple Silicon &amp; Intel)</strong> (<code class="font-mono">launchd</code> LaunchDaemon + LaunchAgent + <code class="font-mono">/Applications/NS8 Software Center.app</code>) vorliegt.
           </p>
 
           <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -532,10 +596,12 @@ onMounted(() => {
               <pre class="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-slate-200">{{ applyHeadlessToggle(tok.install_ps1_cmd, headlessMode) }}</pre>
             </div>
 
-            <!-- Bash Command -->
+            <!-- Bash Command (Linux & macOS Universal) -->
             <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5">
               <div class="mb-2 flex items-center justify-between text-[11px]">
-                <span class="font-semibold text-emerald-400">Linux Bash (Debian/Ubuntu &amp; RHEL/Rocky/Fedora)</span>
+                <span class="font-semibold text-emerald-400">
+                  Linux &amp; macOS Universal (Auto-Erkennung via uname -s · Apple Silicon &amp; Intel)
+                </span>
                 <button
                   type="button"
                   aria-label="Bash-Befehl kopieren"
@@ -632,13 +698,57 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Tab 4: Manual / Golden-Image CLI Commands -->
+        <!-- Tab 4: macOS Mass Rollout via MDM (Jamf Pro / Intune / Kandji / Mosyle) -->
+        <div v-else-if="getActiveTab(tok.id) === 'mdm'" class="space-y-4 p-5">
+          <div class="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/90 p-4 sm:flex-row sm:items-center dark:border-zinc-700 dark:bg-zinc-800/40">
+            <div class="space-y-1 text-xs text-slate-700 dark:text-slate-200">
+              <div class="flex flex-wrap items-center gap-2 font-bold text-slate-900 dark:text-white">
+                <span>Idempotentes Root-MDM-Shellskript für Apple Silicon &amp; Intel Macs</span>
+                <OsBadge os-family="macos" os-name="Jamf / Intune / Kandji" />
+              </div>
+              <ol class="list-inside list-decimal space-y-0.5 text-slate-600 dark:text-slate-300">
+                <li>Laden Sie <code class="font-mono">install-swm-mdm-macos.sh</code> (reines LF) in Jamf Pro (<em>Scripts</em>) oder Microsoft Intune (<em>Devices → macOS → Shell scripts → Run script as signed-in user: No</em>) hoch.</li>
+                <li>Das Skript prüft vorab <code class="font-mono">/Library/Application Support/NS8-SoftwareManager/config.json</code> sowie <code class="font-mono">launchctl print system/org.nethserver.swm-agent</code>.</li>
+                <li>Auf Workstations werden sowohl der <code class="font-mono">LaunchDaemon</code> als auch <code class="font-mono">/Applications/NS8 Software Center.app</code> + Aqua-<code class="font-mono">LaunchAgent</code> vollautomatisch eingerichtet.</li>
+              </ol>
+            </div>
+
+            <button
+              type="button"
+              data-testid="download-mdm-macos-btn"
+              class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-slate-800 dark:bg-sky-600 dark:hover:bg-sky-500"
+              @click="downloadTextFile('install-swm-mdm-macos.sh', buildMacosMdmScript(tok), 'text/x-shellscript;charset=utf-8')"
+            >
+              <Download class="h-4 w-4" aria-hidden="true" />
+              install-swm-mdm-macos.sh herunterladen
+            </button>
+          </div>
+
+          <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5">
+            <div class="mb-2 flex items-center justify-between text-[11px]">
+              <span class="font-semibold text-zinc-300">install-swm-mdm-macos.sh (Root MDM Policy · Pure LF)</span>
+              <button
+                type="button"
+                data-testid="copy-mdm-macos-btn"
+                class="inline-flex items-center gap-1 font-semibold text-slate-300 hover:text-white"
+                @click="copyRaw(buildMacosMdmScript(tok), `mdm-${tok.id}`, 'macOS-MDM-Skript kopiert')"
+              >
+                <Check v-if="copiedKey === `mdm-${tok.id}`" class="h-3.5 w-3.5 text-emerald-400" />
+                <Copy v-else class="h-3.5 w-3.5" />
+                {{ copiedKey === `mdm-${tok.id}` ? 'Kopiert' : 'Skript kopieren' }}
+              </button>
+            </div>
+            <pre data-testid="mdm-macos-script-preview" class="overflow-x-auto font-mono text-[11px] text-slate-200">{{ buildMacosMdmScript(tok) }}</pre>
+          </div>
+        </div>
+
+        <!-- Tab 5: Manual / Golden-Image CLI Commands -->
         <div v-else class="space-y-3 p-5">
           <p class="text-xs text-slate-600 dark:text-slate-400">
             Für Offline-Umgebungen, RMM-Werkzeuge oder vorinstallierte Golden-Images können Sie die unten aufgelisteten Binaries vorab ablegen und die Einschreibung direkt per CLI auslösen:
           </p>
 
-          <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5">
               <div class="mb-2 flex items-center justify-between text-[11px]">
                 <span class="font-semibold text-sky-400">Windows CLI (swm-agent.exe)</span>
@@ -670,6 +780,22 @@ onMounted(() => {
               </div>
               <pre class="overflow-x-auto font-mono text-[11px] text-slate-200">{{ buildManualLinuxSnippet(tok) }}</pre>
             </div>
+
+            <div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5">
+              <div class="mb-2 flex items-center justify-between text-[11px]">
+                <span class="font-semibold text-zinc-300">macOS Universal CLI (swm-agent)</span>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 font-semibold text-slate-300 hover:text-white"
+                  @click="copyRaw(buildManualMacosSnippet(tok), `man-mac-${tok.id}`)"
+                >
+                  <Check v-if="copiedKey === `man-mac-${tok.id}`" class="h-3.5 w-3.5 text-emerald-400" />
+                  <Copy v-else class="h-3.5 w-3.5" />
+                  Kopieren
+                </button>
+              </div>
+              <pre class="overflow-x-auto font-mono text-[11px] text-slate-200">{{ buildManualMacosSnippet(tok) }}</pre>
+            </div>
           </div>
         </div>
       </div>
@@ -695,6 +821,7 @@ onMounted(() => {
           <thead class="bg-slate-50 text-left font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
             <tr>
               <th class="px-4 py-3">Komponente</th>
+              <th class="px-4 py-3">Plattform</th>
               <th class="px-4 py-3">Datei</th>
               <th class="px-4 py-3">Größe</th>
               <th class="px-4 py-3">SHA-256 Prüfsumme</th>
@@ -709,6 +836,9 @@ onMounted(() => {
             >
               <td class="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
                 {{ art.label }}
+              </td>
+              <td class="px-4 py-3">
+                <OsBadge :os-family="art.os_family" />
               </td>
               <td class="px-4 py-3 font-mono text-slate-600 dark:text-slate-300">
                 {{ art.platform }}/{{ art.filename }}

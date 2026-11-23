@@ -49,6 +49,7 @@ from app.schemas import (
     JobResultIn,
     SelfServiceTriggerRequest,
     SignedJobOut,
+    normalize_os_family_str,
 )
 from app.services import (
     ACTIVE_JOB_STATUSES,
@@ -214,8 +215,8 @@ async def submit_agent_inventory(
     if payload.domain is not None:
         device.domain = payload.domain
     if payload.os_family:
-        norm_os = payload.os_family.strip().lower()
-        if norm_os in ("windows", "linux"):
+        norm_os = normalize_os_family_str(payload.os_family)
+        if norm_os in ("windows", "linux", "macos"):
             device.os_family = norm_os
     if payload.os_name is not None:
         device.os_name = payload.os_name

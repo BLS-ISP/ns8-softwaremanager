@@ -220,7 +220,7 @@ async fn test_full_agent_enroll_approval_signed_job_and_ipc_self_service_e2e() {
         description: "Self-service desktop utility".to_string(),
         category: "Productivity".to_string(),
         icon_url: String::new(),
-        os_family: if cfg!(windows) { "windows" } else { "linux" }.to_string(),
+        os_family: swm_agent::inventory::system::detect_os_family().to_string(),
         source_type: "custom".to_string(),
         package_ref: pkg_filename.clone(),
         version: "2.0.0".to_string(),

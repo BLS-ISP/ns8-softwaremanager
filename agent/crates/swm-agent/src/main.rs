@@ -18,7 +18,7 @@ struct Cli {
     #[arg(long, global = true, env = "SWM_DATA_DIR")]
     data_dir: Option<PathBuf>,
 
-    /// Local IPC endpoint address (Named Pipe on Windows, Unix Socket on Linux, or 127.0.0.1:<port> for tests)
+    /// Local IPC endpoint address (Named Pipe on Windows, Unix Socket on macOS/Linux, or 127.0.0.1:<port> for tests)
     #[arg(long, global = true, env = "SWM_IPC_ADDR")]
     ipc_addr: Option<String>,
 
@@ -52,10 +52,10 @@ enum Commands {
         poll_interval_secs: u64,
     },
 
-    /// Register `swm-agent` as a native Windows Service or Linux systemd service
+    /// Register `swm-agent` as a native Windows Service, macOS LaunchDaemon, or Linux systemd service
     ServiceInstall,
 
-    /// Remove the registered Windows Service or Linux systemd service
+    /// Remove the registered Windows Service, macOS LaunchDaemon, or Linux systemd service
     ServiceUninstall,
 
     /// Internal entrypoint invoked by the OS service manager

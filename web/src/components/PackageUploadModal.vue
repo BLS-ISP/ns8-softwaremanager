@@ -1,9 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { CheckCircle2, FileUp, PackagePlus, ShieldCheck, X } from 'lucide-vue-next'
+import { CheckCircle2, FileUp, PackagePlus, ShieldCheck, Sparkles, X } from 'lucide-vue-next'
 import { adminApi } from '@/api/client'
 import type { CatalogCreatePayload, CatalogItem, OsFamily, SourceType } from '@/api/types'
 import { formatBytes } from '@/utils/format'
+
+type DetectionTypeOption =
+  | 'none'
+  | 'file'
+  | 'registry'
+  | 'package'
+  | 'app_bundle'
+  | 'pkgutil'
+  | 'brew'
+  | 'brew_cask'
 
 const props = defineProps<{
   open: boolean
@@ -35,8 +45,9 @@ const returnCodesZero = ref('success')
 const returnCodes3010 = ref('reboot_required')
 const returnCodes1641 = ref('reboot_required')
 
-const detectionType = ref<'none' | 'file' | 'registry' | 'package'>('none')
+const detectionType = ref<DetectionTypeOption>('none')
 const detectionPath = ref('')
+const detectionBundleId = ref('')
 const detectionValueName = ref('')
 const detectionVersion = ref('')
 
@@ -61,6 +72,13 @@ const availableSources = computed<{ value: SourceType; label: string }[]>(() => 
       { value: 'custom', label: 'Eigenes Paket (.msi / .exe / .zip / .ps1)' },
     ]
   }
+  if (osFamily.value === 'macos') {
+    return [
+      { value: 'brew_cask', label: 'Homebrew Cask (Desktop-App .app)' },
+      { value: 'brew', label: 'Homebrew Formula (CLI-Paket)' },
+      { value: 'custom', label: 'Eigenes macOS-Paket (.pkg, .dmg, .app.zip, .sh)' },
+    ]
+  }
   return [
     { value: 'apt', label: 'APT (Debian / Ubuntu / Mint)' },
     { value: 'dnf', label: 'DNF (RHEL / Rocky / Alma / Fedora)' },
@@ -69,10 +87,46 @@ const availableSources = computed<{ value: SourceType; label: string }[]>(() => 
   ]
 })
 
+const availableDetectionTypes = computed<{ value: DetectionTypeOption; label: string }[]>(() => {
+  if (osFamily.value === 'macos') {
+    return [
+      { value: 'none', label: 'Automatisch (Homebrew / Paketmanager)' },
+      { value: 'app_bundle', label: 'App-Bundle unter /Applications/*.app' },
+      { value: 'pkgutil', label: 'macOS Installer-Receipt (pkgutil)' },
+      { value: 'brew_cask', label: 'Homebrew Cask (brew_cask)' },
+      { value: 'brew', label: 'Homebrew Formula (brew)' },
+      { value: 'file', label: 'Dateipfad & Version' },
+    ]
+  }
+  if (osFamily.value === 'windows') {
+    return [
+      { value: 'none', label: 'Automatisch (Paketmanager)' },
+      { value: 'file', label: 'Dateipfad & Version' },
+      { value: 'registry', label: 'Windows Registry-Schlüssel' },
+      { value: 'package', label: 'Installierter Paketname' },
+    ]
+  }
+  return [
+    { value: 'none', label: 'Automatisch (Paketmanager)' },
+    { value: 'file', label: 'Dateipfad & Version' },
+    { value: 'package', label: 'Installierter Paketname' },
+  ]
+})
+
+const fileAccept = computed(() =>
+  osFamily.value === 'macos'
+    ? '.pkg,.dmg,.zip,.sh'
+    : '.msi,.exe,.zip,.deb,.rpm,.pkg,.dmg,.ps1,.sh,.bin,*',
+)
+
 watch(osFamily, (newOs) => {
-  const valid = availableSources.value.some((s) => s.value === sourceType.value)
-  if (!valid) {
-    sourceType.value = newOs === 'windows' ? 'winget' : 'apt'
+  const validSource = availableSources.value.some((s) => s.value === sourceType.value)
+  if (!validSource) {
+    sourceType.value = newOs === 'windows' ? 'winget' : newOs === 'macos' ? 'brew_cask' : 'apt'
+  }
+  const validDet = availableDetectionTypes.value.some((d) => d.value === detectionType.value)
+  if (!validDet) {
+    detectionType.value = 'none'
   }
 })
 
@@ -112,11 +166,17 @@ watch(
       uploadedSha256.value = item.sha256 || null
 
       const rule = (item.detection_rule || {}) as Record<string, string>
-      detectionType.value =
-        (rule.type as 'none' | 'file' | 'registry' | 'package') || 'none'
-      detectionPath.value = rule.path || rule.key_path || rule.package_name || ''
+      detectionType.value = (rule.type as DetectionTypeOption) || 'none'
+      detectionPath.value =
+        rule.path ||
+        rule.key_path ||
+        rule.package_name ||
+        rule.package_id ||
+        rule.package ||
+        ''
+      detectionBundleId.value = rule.bundle_id || ''
       detectionValueName.value = rule.value_name || ''
-      detectionVersion.value = rule.version || rule.expected_version || ''
+      detectionVersion.value = rule.min_version || rule.version || rule.expected_version || ''
     } else {
       name.value = ''
       version.value = ''
@@ -134,6 +194,7 @@ watch(
       uploadedSha256.value = null
       detectionType.value = 'none'
       detectionPath.value = ''
+      detectionBundleId.value = ''
       detectionValueName.value = ''
       detectionVersion.value = ''
     }
@@ -156,6 +217,21 @@ function onFileSelected(event: Event) {
   }
 }
 
+function applyMacosDetectionPreset(preset: 'app_bundle' | 'pkgutil') {
+  detectionType.value = preset
+  if (preset === 'app_bundle' && !detectionPath.value.trim()) {
+    const cleanName = (name.value || 'AppName').trim().replace(/\.app$/i, '')
+    detectionPath.value = `/Applications/${cleanName}.app`
+  } else if (preset === 'pkgutil' && !detectionPath.value.trim()) {
+    const slug = (name.value || 'app')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    detectionPath.value = `com.vendor.${slug || 'pkg'}`
+  }
+}
+
 function validateForm(): string | null {
   if (!name.value.trim()) {
     return 'Bitte geben Sie einen Anzeigenamen für das Software-Paket ein.'
@@ -164,13 +240,22 @@ function validateForm(): string | null {
     return 'Bitte geben Sie eine gültige Versionsnummer an (z. B. 24.08).'
   }
   if (sourceType.value !== 'custom' && !packageRef.value.trim()) {
-    return 'Bitte geben Sie die Paket-ID / Referenz des Paketmanagers an (z. B. Mozilla.Firefox).'
+    return 'Bitte geben Sie die Paket-ID / Referenz des Paketmanagers an (z. B. Mozilla.Firefox oder firefox).'
   }
-  if (sourceType.value === 'custom' && !props.editItem && !selectedFile.value && !packageRef.value.trim()) {
+  if (
+    sourceType.value === 'custom' &&
+    !props.editItem &&
+    !selectedFile.value &&
+    !packageRef.value.trim()
+  ) {
     return 'Für ein eigenes Paket muss eine Installationsdatei ausgewählt oder eine Paket-Referenz angegeben werden.'
   }
-  if (detectionType.value !== 'none' && !detectionPath.value.trim()) {
-    return 'Bitte geben Sie den Pfad, Registry-Schlüssel oder Paketnamen für die Erkennungsregel an.'
+  if (detectionType.value === 'brew' || detectionType.value === 'brew_cask') {
+    if (!detectionPath.value.trim() && !packageRef.value.trim()) {
+      return 'Bitte geben Sie den Homebrew-Paketnamen für die Erkennungsregel an.'
+    }
+  } else if (detectionType.value !== 'none' && !detectionPath.value.trim()) {
+    return 'Bitte geben Sie den Pfad, Bundle-Pfad, Receipt-Schlüssel oder Paketnamen für die Erkennungsregel an.'
   }
   return null
 }
@@ -188,7 +273,38 @@ function buildPayload(): CatalogCreatePayload {
   }
 
   let detectionRule: Record<string, unknown> = {}
-  if (detectionType.value === 'file') {
+  if (detectionType.value === 'none') {
+    if (
+      osFamily.value === 'macos' &&
+      (sourceType.value === 'brew' || sourceType.value === 'brew_cask') &&
+      packageRef.value.trim()
+    ) {
+      detectionRule = {
+        type: sourceType.value,
+        package: packageRef.value.trim(),
+        ...(detectionVersion.value.trim() ? { min_version: detectionVersion.value.trim() } : {}),
+      }
+    }
+  } else if (detectionType.value === 'app_bundle') {
+    detectionRule = {
+      type: 'app_bundle',
+      path: detectionPath.value.trim(),
+      min_version: detectionVersion.value.trim() || version.value.trim(),
+      ...(detectionBundleId.value.trim() ? { bundle_id: detectionBundleId.value.trim() } : {}),
+    }
+  } else if (detectionType.value === 'pkgutil') {
+    detectionRule = {
+      type: 'pkgutil',
+      package_id: detectionPath.value.trim(),
+      min_version: detectionVersion.value.trim() || version.value.trim(),
+    }
+  } else if (detectionType.value === 'brew' || detectionType.value === 'brew_cask') {
+    detectionRule = {
+      type: detectionType.value,
+      package: detectionPath.value.trim() || packageRef.value.trim(),
+      ...(detectionVersion.value.trim() ? { min_version: detectionVersion.value.trim() } : {}),
+    }
+  } else if (detectionType.value === 'file') {
     detectionRule = {
       type: 'file',
       path: detectionPath.value.trim(),
@@ -287,7 +403,7 @@ async function handleSubmit() {
     role="dialog"
     aria-modal="true"
     :aria-label="editItem ? 'Software-Paket bearbeiten' : 'Neues Software-Paket anlegen'"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
+    class="!mt-0 fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm"
     @click.self="emit('close')"
   >
     <div
@@ -304,7 +420,7 @@ async function handleSubmit() {
               {{ editItem ? 'Software-Paket bearbeiten' : 'Neues Software-Paket anlegen' }}
             </h3>
             <p class="text-xs text-slate-400">
-              Nativer Paketmanager (WinGet, APT, DNF, Flatpak) oder eigenes NS8-Repository-Paket
+              Nativer Paketmanager (WinGet, APT, DNF, Flatpak, Homebrew) oder eigenes NS8-Repository-Paket
             </p>
           </div>
         </div>
@@ -381,12 +497,14 @@ async function handleSubmit() {
               >
                 <option value="windows">Windows (10/11 &amp; Windows Server)</option>
                 <option value="linux">Linux (Debian/Ubuntu &amp; RHEL/Rocky/Fedora)</option>
+                <option value="macos">macOS (Apple Silicon &amp; Intel)</option>
               </select>
             </div>
 
             <div>
               <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Paket-Quelle *</label>
               <select
+                :key="`src-${osFamily}`"
                 v-model="sourceType"
                 data-testid="catalog-source-type"
                 class="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
@@ -442,7 +560,15 @@ async function handleSubmit() {
 
           <div>
             <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-              {{ sourceType === 'custom' ? 'Dateiname / Paket-Referenz' : 'Paket-ID im Paketmanager *' }}
+              {{
+                sourceType === 'custom'
+                  ? 'Dateiname / Paket-Referenz'
+                  : sourceType === 'brew_cask'
+                    ? 'Homebrew Cask Token *'
+                    : sourceType === 'brew'
+                      ? 'Homebrew Formula Name *'
+                      : 'Paket-ID im Paketmanager *'
+              }}
             </label>
             <input
               v-model="packageRef"
@@ -451,14 +577,31 @@ async function handleSubmit() {
               :placeholder="
                 sourceType === 'winget'
                   ? 'z. B. Mozilla.Firefox.ESR oder 7zip.7zip'
-                  : sourceType === 'flatpak'
-                    ? 'z. B. org.mozilla.firefox'
-                    : sourceType === 'custom'
-                      ? 'Wird beim Datei-Upload automatisch vorbelegt (z. B. setup.msi)'
-                      : 'z. B. firefox-esr oder vim'
+                  : sourceType === 'brew_cask'
+                    ? 'z. B. firefox, google-chrome oder visual-studio-code'
+                    : sourceType === 'brew'
+                      ? 'z. B. jq, wget oder ripgrep'
+                      : sourceType === 'flatpak'
+                        ? 'z. B. org.mozilla.firefox'
+                        : sourceType === 'custom'
+                          ? osFamily === 'macos'
+                            ? 'Wird beim Datei-Upload automatisch vorbelegt (z. B. Firefox.dmg oder CorpVPN.pkg)'
+                            : 'Wird beim Datei-Upload automatisch vorbelegt (z. B. setup.msi)'
+                          : 'z. B. firefox-esr oder vim'
               "
               class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
             />
+            <p
+              v-if="osFamily === 'macos'"
+              class="mt-1 text-xs text-slate-500 dark:text-slate-400"
+            >
+              <template v-if="sourceType === 'brew_cask' || sourceType === 'brew'">
+                Der Agent führt Homebrew automatisch im Kontext des lokalen Konsolen-/Brew-Eigentümers aus (niemals unsicher als <code>root</code>).
+              </template>
+              <template v-else>
+                <code>.pkg</code> wird via <code>installer -pkg -target /</code> installiert; <code>.dmg</code> &amp; <code>.app.zip</code> kopieren <code>.app</code>-Bundles nach <code>/Applications</code> und entfernen das Quarantäne-Attribut.
+              </template>
+            </p>
           </div>
 
           <div>
@@ -492,11 +635,16 @@ async function handleSubmit() {
               <input
                 v-model="installArgs"
                 type="text"
-                placeholder="z. B. /qn /norestart oder /S"
+                :placeholder="osFamily === 'macos' ? 'Optional für .sh-Skripte (z. B. --silent)' : 'z. B. /qn /norestart oder /S'"
                 class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
               />
               <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Bei WinGet wird <code>--scope machine --silent</code> automatisch durch den Agenten erzwungen.
+                <template v-if="osFamily === 'macos'">
+                  Bei Homebrew (<code>NONINTERACTIVE=1</code>), <code>.pkg</code> und <code>.dmg</code> erfolgt die Installation vollautomatisch ohne Rückfragen.
+                </template>
+                <template v-else>
+                  Bei WinGet wird <code>--scope machine --silent</code> automatisch durch den Agenten erzwungen.
+                </template>
               </p>
             </div>
 
@@ -507,7 +655,7 @@ async function handleSubmit() {
               <input
                 v-model="uninstallArgs"
                 type="text"
-                placeholder="z. B. /x {GUID} /qn /norestart"
+                :placeholder="osFamily === 'macos' ? 'z. B. rm -rf /Applications/MyApp.app' : 'z. B. /x {GUID} /qn /norestart'"
                 class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
               />
             </div>
@@ -520,7 +668,7 @@ async function handleSubmit() {
             <input
               v-model="blockedProcessesInput"
               type="text"
-              placeholder="z. B. firefox.exe, outlook.exe"
+              :placeholder="osFamily === 'macos' ? 'z. B. firefox, Slack, Microsoft Word' : 'z. B. firefox.exe, outlook.exe'"
               class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
             />
             <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -573,13 +721,18 @@ async function handleSubmit() {
                   Installationsdatei für lokales NS8-Repository (Chunked Upload)
                 </h4>
                 <p class="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
-                  Unterstützt große Pakete (.msi, .exe, .zip, .deb, .rpm, .ps1, .sh) mit Streaming-Upload, automatischer SHA-256-Prüfsumme und HTTP-Range-Download für VPN-Clients.
+                  <template v-if="osFamily === 'macos'">
+                    Unterstützt macOS-Installer (<code>.pkg</code>, <code>.dmg</code>, <code>.app.zip</code>, <code>.sh</code>) mit Streaming-Upload, automatischer SHA-256-Prüfsumme und HTTP-Range-Download.
+                  </template>
+                  <template v-else>
+                    Unterstützt große Pakete (.msi, .exe, .zip, .deb, .rpm, .pkg, .dmg, .ps1, .sh) mit Streaming-Upload, automatischer SHA-256-Prüfsumme und HTTP-Range-Download für VPN-Clients.
+                  </template>
                 </p>
 
                 <input
                   type="file"
                   data-testid="catalog-file-input"
-                  accept=".msi,.exe,.zip,.deb,.rpm,.ps1,.sh,.bin,*"
+                  :accept="fileAccept"
                   class="mt-3 block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-sky-600 file:px-3.5 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-sky-700 dark:text-slate-300"
                   @change="onFileSelected"
                 />
@@ -625,26 +778,71 @@ async function handleSubmit() {
                 </p>
               </div>
               <select
+                :key="`det-${osFamily}`"
                 v-model="detectionType"
                 data-testid="detection-rule-type"
                 class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
               >
-                <option value="none">Automatisch (Paketmanager)</option>
-                <option value="file">Dateipfad &amp; Version</option>
-                <option value="registry">Windows Registry-Schlüssel</option>
-                <option value="package">Installierter Paketname</option>
+                <option v-for="opt in availableDetectionTypes" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
               </select>
+            </div>
+
+            <!-- Guided macOS Presets & Auto-Brew Hint -->
+            <div
+              v-if="osFamily === 'macos'"
+              class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-950/60"
+            >
+              <span class="text-slate-600 dark:text-slate-300">
+                <template v-if="detectionType === 'none' && (sourceType === 'brew_cask' || sourceType === 'brew')">
+                  Automatische Homebrew-Regel aktiv:
+                  <code class="font-mono font-semibold text-sky-700 dark:text-sky-300">
+                    {{ sourceType }}:{{ packageRef || 'paketname' }}
+                  </code>
+                </template>
+                <template v-else>
+                  macOS-Erkennungsvorlagen für <code>Info.plist</code>-Versionen oder <code>.pkg</code>-Receipts:
+                </template>
+              </span>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  data-testid="preset-macos-app-bundle"
+                  class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  @click="applyMacosDetectionPreset('app_bundle')"
+                >
+                  <Sparkles class="h-3 w-3 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+                  App-Bundle (/Applications/*.app)
+                </button>
+                <button
+                  type="button"
+                  data-testid="preset-macos-pkgutil"
+                  class="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  @click="applyMacosDetectionPreset('pkgutil')"
+                >
+                  pkgutil Receipt
+                </button>
+              </div>
             </div>
 
             <div v-if="detectionType !== 'none'" class="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
               <div class="sm:col-span-2">
                 <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   {{
-                    detectionType === 'file'
-                      ? 'Vollständiger Dateipfad *'
-                      : detectionType === 'registry'
-                        ? 'Registry-Pfad (HKLM) *'
-                        : 'Paketname *'
+                    detectionType === 'app_bundle'
+                      ? 'App-Bundle-Pfad unter /Applications *'
+                      : detectionType === 'pkgutil'
+                        ? 'macOS Installer-Receipt ID (pkgutil --pkg-info) *'
+                        : detectionType === 'brew_cask'
+                          ? 'Homebrew Cask Token *'
+                          : detectionType === 'brew'
+                            ? 'Homebrew Formula Name *'
+                            : detectionType === 'file'
+                              ? 'Vollständiger Dateipfad *'
+                              : detectionType === 'registry'
+                                ? 'Registry-Pfad (HKLM) *'
+                                : 'Paketname *'
                   }}
                 </label>
                 <input
@@ -652,12 +850,33 @@ async function handleSubmit() {
                   data-testid="detection-rule-path"
                   type="text"
                   :placeholder="
-                    detectionType === 'file'
-                      ? 'C:\\Program Files\\7-Zip\\7z.exe oder /usr/bin/7z'
-                      : detectionType === 'registry'
-                        ? 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\7-Zip'
-                        : '7zip'
+                    detectionType === 'app_bundle'
+                      ? '/Applications/Firefox.app'
+                      : detectionType === 'pkgutil'
+                        ? 'com.vendor.pkg oder org.mozilla.firefox.pkg'
+                        : detectionType === 'brew_cask'
+                          ? packageRef || 'firefox'
+                          : detectionType === 'brew'
+                            ? packageRef || 'jq'
+                            : detectionType === 'file'
+                              ? 'C:\\Program Files\\7-Zip\\7z.exe oder /usr/local/bin/tool'
+                              : detectionType === 'registry'
+                                ? 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\7-Zip'
+                                : '7zip'
                   "
+                  class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"
+                />
+              </div>
+
+              <div v-if="detectionType === 'app_bundle'">
+                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Bundle-ID (CFBundleIdentifier, optional)
+                </label>
+                <input
+                  v-model="detectionBundleId"
+                  data-testid="detection-rule-bundle-id"
+                  type="text"
+                  placeholder="z. B. org.mozilla.firefox"
                   class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"
                 />
               </div>
@@ -673,9 +892,12 @@ async function handleSubmit() {
               </div>
 
               <div>
-                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">Mindestversion (optional)</label>
+                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  {{ detectionType === 'app_bundle' ? 'Mindestversion (CFBundleShortVersionString)' : 'Mindestversion (optional)' }}
+                </label>
                 <input
                   v-model="detectionVersion"
+                  data-testid="detection-rule-version"
                   type="text"
                   :placeholder="version || '24.08'"
                   class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs dark:border-slate-700 dark:bg-slate-950"

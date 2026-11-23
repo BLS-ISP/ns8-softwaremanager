@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.nethserver.swm-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/swm-agent</string>
+        <string>run</string>
+        <string>--data-dir</string>
+        <string>/Library/Application Support/NS8-SoftwareManager</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/ns8-swm-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ns8-swm-agent.err.log</string>
+</dict>
+</plist>

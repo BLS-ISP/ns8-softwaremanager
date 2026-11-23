@@ -100,16 +100,25 @@ async def enroll_test_device(
     assert tok_resp.status_code == 200, tok_resp.text
     enroll_tok = tok_resp.json()["token"]
 
+    is_mac = os_family.strip().lower() in ("mac", "macos", "darwin", "osx", "mac os x")
+    default_os_name = (
+        "Windows 11 Pro"
+        if os_family == "windows"
+        else ("macOS Sequoia" if is_mac else "Ubuntu 24.04")
+    )
+    default_os_version = (
+        "23H2" if os_family == "windows" else ("15.1" if is_mac else "24.04")
+    )
     enr_resp = await client.post(
         "/api/v1/agent/enroll",
         json={
             "enrollment_token": enroll_tok,
             "hostname": hostname,
             "os_family": os_family,
-            "os_name": "Windows 11 Pro" if os_family == "windows" else "Ubuntu 24.04",
-            "os_version": "23H2" if os_family == "windows" else "24.04",
-            "arch": "amd64",
-            "agent_version": "1.0.0",
+            "os_name": default_os_name,
+            "os_version": default_os_version,
+            "arch": "arm64" if is_mac else "amd64",
+            "agent_version": "1.2.0",
             "machine_uid": machine_uid or f"uid-{hostname}",
         },
     )

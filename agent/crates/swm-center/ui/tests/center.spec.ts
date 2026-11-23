@@ -458,4 +458,27 @@ describe('NS8 Software Center UI', () => {
     wrapper.unmount();
     vi.unstubAllGlobals();
   });
+
+  it('renders Homebrew and Homebrew Cask source badges for macOS catalog items', () => {
+    const macItems: CatalogViewItem[] = [
+      {
+        ...sampleCatalog[0],
+        package_id: 'pkg-mac-ff',
+        os_family: 'macos',
+        source_type: 'brew_cask',
+      },
+      {
+        ...sampleCatalog[2],
+        package_id: 'pkg-mac-jq',
+        name: 'jq',
+        os_family: 'macos',
+        source_type: 'brew',
+      },
+    ];
+    const wrapper = mount(StoreView, {
+      props: { items: macItems, busyId: null },
+    });
+    expect(wrapper.find('[data-testid="app-card-pkg-mac-ff"]').text()).toContain('Homebrew Cask');
+    expect(wrapper.find('[data-testid="app-card-pkg-mac-jq"]').text()).toContain('Homebrew');
+  });
 });

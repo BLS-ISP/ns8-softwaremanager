@@ -22,10 +22,10 @@ class CatalogItem(Base):
     icon_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     os_family: Mapped[str] = mapped_column(
         String(32), nullable=False, index=True
-    )  # windows | linux
+    )  # windows | linux | macos
     source_type: Mapped[str] = mapped_column(
         String(32), nullable=False, index=True
-    )  # winget | apt | dnf | flatpak | custom
+    )  # winget | apt | dnf | flatpak | brew | brew_cask | custom
     package_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     install_args: Mapped[str] = mapped_column(Text, nullable=False, default="")
     uninstall_args: Mapped[str] = mapped_column(Text, nullable=False, default="")

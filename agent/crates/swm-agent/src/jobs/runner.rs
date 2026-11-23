@@ -1,13 +1,15 @@
 use crate::config::{AgentConfig, AgentRuntimeState};
 use crate::inventory::build_inventory_report;
 use crate::patching::linux_pkg::{install_linux_os_updates, scan_linux_os_updates};
+use crate::patching::macos_update::{install_macos_os_updates, scan_macos_os_updates};
 use crate::patching::reboot_manager::{execute_system_reboot, RebootManager};
 use crate::patching::windows_wua::{PowerShellWuaProvider, WuaProvider};
-use crate::self_update::stage_and_swap_binary;
+use crate::self_update::{schedule_agent_service_restart, stage_and_swap_binary};
 use crate::software::detection::{check_blocked_processes, evaluate_detection_rule};
 use crate::software::linux_installer::{
     build_linux_native_plan, execute_linux_plan, run_linux_custom_package,
 };
+use crate::software::macos_installer::{run_brew_action, run_macos_custom_package};
 use crate::software::windows_installer::run_windows_custom_package;
 use crate::software::winget::{resolve_winget_binary, run_winget_action};
 use crate::transport::api_client::AgentApiClient;
@@ -182,6 +184,8 @@ async fn execute_scan_updates_job(ctx: &mut JobExecutionContext<'_>) -> JobResul
         PowerShellWuaProvider
             .scan(&ctx.state.excluded_updates, Duration::from_secs(60))
             .await
+    } else if cfg!(target_os = "macos") {
+        scan_macos_os_updates(&ctx.state.excluded_updates).await
     } else {
         scan_linux_os_updates(&ctx.state.excluded_updates).await
     };
@@ -230,6 +234,60 @@ async fn execute_os_patch_job(ctx: &mut JobExecutionContext<'_>, job: &SignedJob
     } else {
         Vec::new()
     };
+
+    if cfg!(target_os = "macos") {
+        let target_ids = if job.security_only {
+            match scan_macos_os_updates(&ctx.state.excluded_updates).await {
+                Ok(scanned) => {
+                    let approved_lower: std::collections::HashSet<String> = approved_ids
+                        .iter()
+                        .map(|s| s.to_ascii_lowercase())
+                        .collect();
+                    let sec_ids: Vec<String> = scanned
+                        .into_iter()
+                        .filter(|u| u.category == "security")
+                        .filter(|u| {
+                            approved_lower.is_empty()
+                                || approved_lower.contains(&u.update_id.to_ascii_lowercase())
+                        })
+                        .map(|u| u.update_id)
+                        .collect();
+                    if sec_ids.is_empty() {
+                        return JobResult {
+                            status: "succeeded".to_string(),
+                            exit_code: 0,
+                            reboot_required: crate::inventory::reboot::detect_os_pending_reboot(),
+                            stdout: "No matching macOS security updates to install.".to_string(),
+                            stderr: String::new(),
+                        };
+                    }
+                    sec_ids
+                }
+                Err(err) => {
+                    return JobResult {
+                        status: "failed".to_string(),
+                        exit_code: 1,
+                        reboot_required: false,
+                        stdout: String::new(),
+                        stderr: format!("macOS security update scan failed: {err}"),
+                    };
+                }
+            }
+        } else {
+            approved_ids
+        };
+
+        return match install_macos_os_updates(&target_ids, &ctx.state.excluded_updates).await {
+            Ok(res) => res,
+            Err(err) => JobResult {
+                status: "failed".to_string(),
+                exit_code: 1,
+                reboot_required: false,
+                stdout: String::new(),
+                stderr: format!("macOS OS patching error: {err}"),
+            },
+        };
+    }
 
     let outcome_res = if cfg!(windows) {
         PowerShellWuaProvider
@@ -316,6 +374,8 @@ async fn execute_software_job(ctx: &mut JobExecutionContext<'_>, job: &SignedJob
                 "custom".to_string()
             } else if cfg!(windows) {
                 "winget".to_string()
+            } else if cfg!(target_os = "macos") {
+                "brew".to_string()
             } else {
                 "apt".to_string()
             }
@@ -390,6 +450,15 @@ async fn execute_software_job(ctx: &mut JobExecutionContext<'_>, job: &SignedJob
                         timeout,
                     )
                     .await
+                } else if cfg!(target_os = "macos") {
+                    run_macos_custom_package(
+                        &verified_file,
+                        &job.action,
+                        cmd_args,
+                        &job.return_codes,
+                        timeout,
+                    )
+                    .await
                 } else {
                     run_linux_custom_package(&verified_file, cmd_args, &job.return_codes, timeout)
                         .await
@@ -421,6 +490,16 @@ async fn execute_software_job(ctx: &mut JobExecutionContext<'_>, job: &SignedJob
             }
             Err(e) => Err(e),
         }
+    } else if source_type == "brew" || source_type == "brew_cask" {
+        run_brew_action(
+            &source_type,
+            &job.action,
+            &package_ref,
+            cmd_args,
+            &job.return_codes,
+            timeout,
+        )
+        .await
     } else {
         match build_linux_native_plan(&source_type, &job.action, &package_ref, cmd_args) {
             Ok(plan) => execute_linux_plan(&plan, &job.return_codes, timeout).await,
@@ -499,17 +578,22 @@ async fn execute_self_update_job(ctx: &mut JobExecutionContext<'_>, job: &Signed
     };
 
     match stage_and_swap_binary(&stage_path, expected_sha, &target_exe) {
-        Ok(backup) => JobResult {
-            status: "succeeded".to_string(),
-            exit_code: 0,
-            reboot_required: false,
-            stdout: format!(
-                "Agent binary updated to version {} (previous backed up at {})",
-                job.version,
-                backup.display()
-            ),
-            stderr: String::new(),
-        },
+        Ok(backup) => {
+            if ctx.target_agent_exe.is_none() {
+                schedule_agent_service_restart();
+            }
+            JobResult {
+                status: "succeeded".to_string(),
+                exit_code: 0,
+                reboot_required: false,
+                stdout: format!(
+                    "Agent binary updated to version {} (previous backed up at {})",
+                    job.version,
+                    backup.display()
+                ),
+                stderr: String::new(),
+            }
+        }
         Err(err) => JobResult {
             status: "failed".to_string(),
             exit_code: 1,

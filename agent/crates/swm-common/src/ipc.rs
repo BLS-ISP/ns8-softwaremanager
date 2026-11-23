@@ -2,12 +2,23 @@ use crate::dto::{AdminDesktopMessage, DesktopPolicy, PendingOsUpdate, RebootStat
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WINDOWS_PIPE: &str = r"\\.\pipe\ns8-swm-ipc";
+pub const DEFAULT_MACOS_SOCKET: &str = "/var/run/ns8-swm/ipc.sock";
 pub const DEFAULT_UNIX_SOCKET: &str = "/run/ns8-swm/ipc.sock";
 pub const MAX_IPC_FRAME_BYTES: usize = 1024 * 1024; // 1 MiB strict cap
+
+pub fn default_ipc_address_for_os(os_family: &str) -> &'static str {
+    match os_family.trim().to_ascii_lowercase().as_str() {
+        "windows" => DEFAULT_WINDOWS_PIPE,
+        "macos" | "darwin" => DEFAULT_MACOS_SOCKET,
+        _ => DEFAULT_UNIX_SOCKET,
+    }
+}
 
 pub fn default_ipc_address() -> &'static str {
     if cfg!(windows) {
         DEFAULT_WINDOWS_PIPE
+    } else if cfg!(target_os = "macos") {
+        DEFAULT_MACOS_SOCKET
     } else {
         DEFAULT_UNIX_SOCKET
     }
@@ -212,5 +223,32 @@ mod tests {
             serde_json::from_str::<IpcRequest>(&dismiss_json).unwrap(),
             dismiss_req
         );
+    }
+
+    #[test]
+    fn test_macos_ipc_socket_and_detection_rule_wire_contract() {
+        assert_eq!(DEFAULT_MACOS_SOCKET, "/var/run/ns8-swm/ipc.sock");
+        assert_eq!(DEFAULT_UNIX_SOCKET, "/run/ns8-swm/ipc.sock");
+        assert_eq!(default_ipc_address_for_os("macos"), DEFAULT_MACOS_SOCKET);
+        assert_eq!(default_ipc_address_for_os("linux"), DEFAULT_UNIX_SOCKET);
+        assert_eq!(default_ipc_address_for_os("windows"), DEFAULT_WINDOWS_PIPE);
+        assert_eq!(crate::dto::AGENT_VERSION, "1.2.0");
+
+        let app_rule: crate::dto::DetectionRule = serde_json::from_str(
+            r#"{"type":"app_bundle","path":"/Applications/Firefox.app","bundle_id":"org.mozilla.firefox","min_version":"132.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(app_rule.rule_type, "app_bundle");
+        assert_eq!(app_rule.path.as_deref(), Some("/Applications/Firefox.app"));
+        assert_eq!(app_rule.bundle_id.as_deref(), Some("org.mozilla.firefox"));
+        assert_eq!(app_rule.effective_version(), Some("132.0"));
+
+        let brew_rule: crate::dto::DetectionRule = serde_json::from_str(
+            r#"{"type":"brew_cask","package":"firefox","version":null,"min_version":"131.0","package_name":null}"#,
+        )
+        .unwrap();
+        assert_eq!(brew_rule.rule_type, "brew_cask");
+        assert_eq!(brew_rule.effective_package(), Some("firefox"));
+        assert_eq!(brew_rule.effective_version(), Some("131.0"));
     }
 }

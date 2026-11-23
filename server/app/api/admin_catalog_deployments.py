@@ -628,11 +628,12 @@ async def trigger_agent_self_update(
             ):
                 continue
 
-        default_dl = (
-            "/dl/agents/windows/swm-agent.exe"
-            if dev.os_family == "windows"
-            else f"/dl/agents/linux-{dev.arch}/swm-agent"
-        )
+        if dev.os_family == "windows":
+            default_dl = "/dl/agents/windows/swm-agent.exe"
+        elif dev.os_family == "macos":
+            default_dl = "/dl/agents/macos-universal/swm-agent"
+        else:
+            default_dl = f"/dl/agents/linux-{dev.arch}/swm-agent"
         dl_url = payload.download_url or default_dl
         job = create_signed_job(
             device_id=dev.id,

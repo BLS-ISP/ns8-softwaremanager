@@ -398,7 +398,56 @@ pub fn render_shield_cube_bgra32() -> Vec<u8> {
     buf
 }
 
-pub fn dispatch_os_notification(note: &DesktopNotification) {
+/// Escapes backslashes (`\`), double quotes (`"`), and control newlines for safe embedding inside AppleScript string literals.
+pub fn escape_applescript_string(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 8);
+    for ch in input.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\r' => {}
+            '\n' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Builds a native macOS AppleScript `display notification` command for `/usr/bin/osascript -e`.
+pub fn build_osascript_notification(note: &DesktopNotification) -> String {
+    let title = escape_applescript_string(&note.title);
+    let body = escape_applescript_string(&note.body);
+    if note.urgent {
+        format!("display notification \"{body}\" with title \"{title}\" sound name \"default\"")
+    } else {
+        format!("display notification \"{body}\" with title \"{title}\"")
+    }
+}
+
+/// Builds the macOS desktop window launch command `(program, args)`:
+/// prefers Google Chrome or Microsoft Edge in frameless `--app=<url>` mode if installed under `/Applications`,
+/// otherwise falls back unconditionally to `/usr/bin/open <url>` without `DISPLAY`/`WAYLAND_DISPLAY` gating.
+pub fn build_macos_window_launch_plan(
+    url: &str,
+    chrome_installed: bool,
+    edge_installed: bool,
+) -> (String, Vec<String>) {
+    if chrome_installed {
+        (
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_string(),
+            vec![format!("--app={url}")],
+        )
+    } else if edge_installed {
+        (
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge".to_string(),
+            vec![format!("--app={url}")],
+        )
+    } else {
+        ("/usr/bin/open".to_string(), vec![url.to_string()])
+    }
+}
+
+pub fn dispatch_native_notification(note: &DesktopNotification) {
     if !notifications_enabled() {
         tracing::info!(
             urgent = note.urgent,
@@ -416,7 +465,18 @@ pub fn dispatch_os_notification(note: &DesktopNotification) {
         note.body
     );
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        let script = build_osascript_notification(note);
+        if let Err(err) = std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", &script])
+            .spawn()
+        {
+            tracing::warn!("Failed spawning macOS osascript notification: {err}");
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let urgency = if note.urgent { "critical" } else { "normal" };
         let _ = std::process::Command::new("notify-send")
@@ -455,6 +515,10 @@ pub fn dispatch_os_notification(note: &DesktopNotification) {
     }
 }
 
+pub fn dispatch_os_notification(note: &DesktopNotification) {
+    dispatch_native_notification(note);
+}
+
 pub fn launch_desktop_window(url: &str) {
     #[cfg(windows)]
     {
@@ -475,7 +539,24 @@ pub fn launch_desktop_window(url: &str) {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        let chrome_installed = std::path::Path::new(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        )
+        .is_file();
+        let edge_installed = std::path::Path::new(
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        )
+        .is_file();
+        let (prog, args) = build_macos_window_launch_plan(url, chrome_installed, edge_installed);
+        if std::process::Command::new(&prog).args(&args).spawn().is_err() && prog != "/usr/bin/open"
+        {
+            let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
             let _ = std::process::Command::new("xdg-open").arg(url).spawn();
@@ -1076,5 +1157,50 @@ mod tests {
     #[test]
     fn test_headless_tray_gate_skips_when_no_open_is_true() {
         assert!(!should_spawn_native_tray(true));
+    }
+
+    #[test]
+    fn test_macos_osascript_escaping_and_window_launch_plan() {
+        let note = DesktopNotification {
+            title: r#"IT "Alert" \ Mac"#.to_string(),
+            body: "Bitte \"Dokumente\" sichern\nNeustart um 18:00".to_string(),
+            urgent: true,
+        };
+        let script = build_osascript_notification(&note);
+        assert_eq!(
+            script,
+            r#"display notification "Bitte \"Dokumente\" sichern Neustart um 18:00" with title "IT \"Alert\" \\ Mac" sound name "default""#
+        );
+
+        let quiet_note = DesktopNotification {
+            title: "NS8 Software Center".to_string(),
+            body: "Synchronisation abgeschlossen.".to_string(),
+            urgent: false,
+        };
+        assert_eq!(
+            build_osascript_notification(&quiet_note),
+            r#"display notification "Synchronisation abgeschlossen." with title "NS8 Software Center""#
+        );
+
+        let (p_open, a_open) =
+            build_macos_window_launch_plan("http://127.0.0.1:51234", false, false);
+        assert_eq!(p_open, "/usr/bin/open");
+        assert_eq!(a_open, vec!["http://127.0.0.1:51234"]);
+
+        let (p_chrome, a_chrome) =
+            build_macos_window_launch_plan("http://127.0.0.1:51234", true, true);
+        assert_eq!(
+            p_chrome,
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        );
+        assert_eq!(a_chrome, vec!["--app=http://127.0.0.1:51234"]);
+
+        let (p_edge, a_edge) =
+            build_macos_window_launch_plan("http://127.0.0.1:51234", false, true);
+        assert_eq!(
+            p_edge,
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+        );
+        assert_eq!(a_edge, vec!["--app=http://127.0.0.1:51234"]);
     }
 }

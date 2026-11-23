@@ -17,7 +17,12 @@ from app.models import (
     ensure_utc,
     utc_now,
 )
-from app.schemas import PatchApproveRequest, PatchExcludeRequest, PatchSummaryOut
+from app.schemas import (
+    PatchApproveRequest,
+    PatchExcludeRequest,
+    PatchSummaryOut,
+    normalize_os_family_str,
+)
 from app.services import (
     ACTIVE_JOB_STATUSES,
     can_dispatch_job_now,
@@ -27,6 +32,19 @@ from app.services import (
 )
 
 router = APIRouter(prefix="/api/v1/admin/patches", tags=["admin-patches"])
+
+
+def _infer_fallback_patch_os(update_id: str) -> str:
+    upper = update_id.upper()
+    if upper.startswith("KB"):
+        return "windows"
+    low = update_id.lower()
+    if any(
+        marker in low
+        for marker in ("macos", "msu_", "osx", "safari", "xcode", "command line tools")
+    ):
+        return "macos"
+    return "linux"
 
 
 @router.get("", response_model=list[PatchSummaryOut])
@@ -47,6 +65,9 @@ async def list_patches(
 
     agg: dict[str, dict[str, Any]] = {}
     for dev in devices:
+        dev_os = normalize_os_family_str(dev.os_family or "")
+        if dev_os not in ("windows", "linux", "macos"):
+            dev_os = dev.os_family
         for u in dev.pending_updates or []:
             pol = pol_map.get(u.update_id)
             rec = agg.get(u.update_id)
@@ -55,7 +76,7 @@ async def list_patches(
                 agg[u.update_id] = {
                     "update_id": u.update_id,
                     "title": u.title or (pol.title if pol else u.update_id),
-                    "os_family": dev.os_family,
+                    "os_family": dev_os,
                     "severity": u.severity or (pol.severity if pol else "important"),
                     "category": u.category or (pol.category if pol else "security"),
                     "size_bytes": u.size_bytes,
@@ -145,12 +166,18 @@ async def approve_patches(
     pol_map = {p.update_id: p for p in pol_res.scalars().all()}
 
     # Gather metadata from pending updates if policy doesn't exist yet
+    all_dev_res = await session.execute(
+        select(Device).where(Device.status != "revoked")
+    )
     meta_by_uid: dict[str, tuple[str, str, str, str]] = {}
-    for d in devices:
+    for d in all_dev_res.scalars().all():
+        d_os = normalize_os_family_str(d.os_family or "")
+        if d_os not in ("windows", "linux", "macos"):
+            d_os = d.os_family
         for u in d.pending_updates or []:
             if u.update_id not in meta_by_uid:
                 meta_by_uid[u.update_id] = (
-                    d.os_family,
+                    d_os,
                     u.title,
                     u.severity,
                     u.category,
@@ -160,7 +187,7 @@ async def approve_patches(
         pol = pol_map.get(uid)
         if pol is None:
             os_fam, title, sev, cat = meta_by_uid.get(
-                uid, ("windows", uid, "important", "security")
+                uid, (_infer_fallback_patch_os(uid), uid, "important", "security")
             )
             pol = PatchPolicy(
                 update_id=uid,
@@ -177,6 +204,8 @@ async def approve_patches(
             session.add(pol)
             pol_map[uid] = pol
         else:
+            if uid in meta_by_uid:
+                pol.os_family = meta_by_uid[uid][0]
             pol.approved = True
             pol.excluded = False
             if payload.group_ids:
@@ -295,21 +324,41 @@ async def exclude_patches(
     )
     pol_map = {p.update_id: p for p in pol_res.scalars().all()}
 
+    dev_res = await session.execute(select(Device).where(Device.status != "revoked"))
+    meta_by_uid: dict[str, tuple[str, str, str, str]] = {}
+    for d in dev_res.scalars().all():
+        d_os = normalize_os_family_str(d.os_family or "")
+        if d_os not in ("windows", "linux", "macos"):
+            d_os = d.os_family
+        for u in d.pending_updates or []:
+            if u.update_id not in meta_by_uid:
+                meta_by_uid[u.update_id] = (
+                    d_os,
+                    u.title or u.update_id,
+                    u.severity or "important",
+                    u.category or "security",
+                )
+
     for uid in payload.update_ids:
         pol = pol_map.get(uid)
         if pol is None:
+            os_fam, title, sev, cat = meta_by_uid.get(
+                uid, (_infer_fallback_patch_os(uid), uid, "important", "security")
+            )
             pol = PatchPolicy(
                 update_id=uid,
-                os_family="windows" if uid.upper().startswith("KB") else "linux",
-                title=uid,
-                severity="important",
-                category="security",
+                os_family=os_fam,
+                title=title,
+                severity=sev,
+                category=cat,
                 approved=False,
                 excluded=payload.excluded,
                 updated_at=utc_now(),
             )
             session.add(pol)
         else:
+            if uid in meta_by_uid:
+                pol.os_family = meta_by_uid[uid][0]
             pol.excluded = payload.excluded
             if payload.excluded:
                 pol.approved = False

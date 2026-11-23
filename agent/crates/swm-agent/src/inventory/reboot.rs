@@ -7,6 +7,7 @@ pub const WIN_WU_REBOOT_REQUIRED: &str =
 pub const WIN_SESSION_MANAGER_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager";
 pub const WIN_PENDING_FILE_RENAME_VALUE: &str = "PendingFileRenameOperations";
 pub const LINUX_REBOOT_REQUIRED_PATH: &str = "/var/run/reboot-required";
+pub const MACOS_UPDATES_INDEX_PLIST: &str = "/Library/Updates/index.plist";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WindowsRebootIndicators {
@@ -92,6 +93,68 @@ pub fn inspect_linux_reboot_indicators_with(
     }
 }
 
+/// Parses macOS `/Library/Updates/index.plist` XML content and returns `true` when
+/// `InstallAtLogout` contains one or more staged update identifiers requiring a restart/logout.
+pub fn parse_macos_updates_index_plist_requires_reboot(plist_xml: &str) -> bool {
+    let Some(key_pos) = plist_xml.find("<key>InstallAtLogout</key>") else {
+        return false;
+    };
+    let rest = &plist_xml[key_pos + "<key>InstallAtLogout</key>".len()..];
+    let trimmed = rest.trim_start();
+    if trimmed.starts_with("<array/>") || trimmed.starts_with("<array />") {
+        return false;
+    }
+    let Some(arr_start) = trimmed.find("<array>") else {
+        return false;
+    };
+    let after_arr = &trimmed[arr_start + "<array>".len()..];
+    let Some(arr_end) = after_arr.find("</array>") else {
+        return false;
+    };
+    let inner = &after_arr[..arr_end];
+    let mut scan = inner;
+    while let Some(s_start) = scan.find("<string>") {
+        let after_s = &scan[s_start + "<string>".len()..];
+        let Some(s_end) = after_s.find("</string>") else {
+            break;
+        };
+        if !after_s[..s_end].trim().is_empty() {
+            return true;
+        }
+        scan = &after_s[s_end + "</string>".len()..];
+    }
+    false
+}
+
+pub fn inspect_macos_reboot_indicators_with(index_plist_path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(index_plist_path) else {
+        return false;
+    };
+
+    #[cfg(target_os = "macos")]
+    if bytes.starts_with(b"bplist") {
+        if let Ok(out) = std::process::Command::new("/usr/bin/plutil")
+            .args([
+                "-convert",
+                "xml1",
+                "-o",
+                "-",
+                &index_plist_path.to_string_lossy(),
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let xml = String::from_utf8_lossy(&out.stdout);
+                return parse_macos_updates_index_plist_requires_reboot(&xml);
+            }
+        }
+        return false;
+    }
+
+    let xml = String::from_utf8_lossy(&bytes);
+    parse_macos_updates_index_plist_requires_reboot(&xml)
+}
+
 /// Cross-platform OS-level pending reboot detector.
 /// Supports override via `SWM_FORCE_REBOOT_REQUIRED=1|0` for deterministic E2E tests.
 pub fn detect_os_pending_reboot() -> bool {
@@ -104,7 +167,12 @@ pub fn detect_os_pending_reboot() -> bool {
         return inspect_windows_reboot_indicators().is_reboot_required();
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        return inspect_macos_reboot_indicators_with(Path::new(MACOS_UPDATES_INDEX_PLIST));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         return inspect_linux_reboot_indicators_with(
             Path::new(LINUX_REBOOT_REQUIRED_PATH),
@@ -165,5 +233,36 @@ mod tests {
             needs_restarting_exit_code: Some(0),
         };
         assert!(!rhel_clean.is_reboot_required());
+    }
+
+    #[test]
+    fn test_inventory_macos_updates_index_plist_reboot_detection() {
+        let dir = tempdir().unwrap();
+        let index_plist = dir.path().join("index.plist");
+        assert!(!inspect_macos_reboot_indicators_with(&index_plist));
+
+        let empty_logout = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>InstallAtLogout</key>
+    <array/>
+    <key>ProductPaths</key>
+    <dict/>
+</dict>
+</plist>"#;
+        std::fs::write(&index_plist, empty_logout).unwrap();
+        assert!(!inspect_macos_reboot_indicators_with(&index_plist));
+
+        let staged_logout = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>InstallAtLogout</key>
+    <array>
+        <string>072-01928</string>
+    </array>
+</dict>
+</plist>"#;
+        std::fs::write(&index_plist, staged_logout).unwrap();
+        assert!(inspect_macos_reboot_indicators_with(&index_plist));
     }
 }

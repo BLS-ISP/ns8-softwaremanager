@@ -5,6 +5,77 @@ use tokio::sync::watch;
 pub const WINDOWS_SERVICE_NAME: &str = "NS8SoftwareManagerAgent";
 pub const WINDOWS_SERVICE_DISPLAY: &str = "NS8 Software Manager Agent";
 pub const SYSTEMD_UNIT_PATH: &str = "/etc/systemd/system/swm-agent.service";
+pub const LAUNCHD_DAEMON_LABEL: &str = "org.nethserver.swm-agent";
+pub const LAUNCHD_DAEMON_PLIST_PATH: &str = "/Library/LaunchDaemons/org.nethserver.swm-agent.plist";
+pub const LAUNCHD_CENTER_LABEL: &str = "org.nethserver.swm-center";
+pub const LAUNCHD_CENTER_PLIST_PATH: &str = "/Library/LaunchAgents/org.nethserver.swm-center.plist";
+
+fn escape_plist_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Generates a clean macOS `launchd` LaunchDaemon plist (`LF` line endings, `KeepAlive = true`).
+pub fn render_launchd_daemon_plist(exe_path: &str, data_dir: &str) -> String {
+    let exe_esc = escape_plist_xml(exe_path);
+    let data_esc = escape_plist_xml(data_dir);
+    let lines = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">".to_string(),
+        "<plist version=\"1.0\">".to_string(),
+        "<dict>".to_string(),
+        "    <key>Label</key>".to_string(),
+        format!("    <string>{LAUNCHD_DAEMON_LABEL}</string>"),
+        "    <key>ProgramArguments</key>".to_string(),
+        "    <array>".to_string(),
+        format!("        <string>{exe_esc}</string>"),
+        "        <string>--data-dir</string>".to_string(),
+        format!("        <string>{data_esc}</string>"),
+        "        <string>run</string>".to_string(),
+        "    </array>".to_string(),
+        "    <key>RunAtLoad</key>".to_string(),
+        "    <true/>".to_string(),
+        "    <key>KeepAlive</key>".to_string(),
+        "    <true/>".to_string(),
+        "    <key>ThrottleInterval</key>".to_string(),
+        "    <integer>10</integer>".to_string(),
+        "    <key>StandardOutPath</key>".to_string(),
+        "    <string>/var/log/ns8-swm-agent.log</string>".to_string(),
+        "    <key>StandardErrorPath</key>".to_string(),
+        "    <string>/var/log/ns8-swm-agent.err.log</string>".to_string(),
+        "</dict>".to_string(),
+        "</plist>".to_string(),
+        String::new(),
+    ];
+    lines.join("\n")
+}
+
+/// Builds the `launchctl` argument vectors used by the macOS session watchdog to revive `swm-center`:
+/// `(kickstart_args, bootstrap_args)`.
+pub fn macos_watchdog_launchctl_commands(uid: u32) -> (Vec<String>, Vec<String>) {
+    (
+        vec![
+            "kickstart".to_string(),
+            "-k".to_string(),
+            format!("gui/{uid}/{LAUNCHD_CENTER_LABEL}"),
+        ],
+        vec![
+            "bootstrap".to_string(),
+            format!("gui/{uid}"),
+            LAUNCHD_CENTER_PLIST_PATH.to_string(),
+        ],
+    )
+}
 
 /// Builds the exact `sc.exe` argument vectors used to configure Windows SCM crash recovery
 /// (`restart/5000/restart/10000/restart/30000` + `failureflag 1`).
@@ -120,7 +191,67 @@ pub fn uninstall_os_service() -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
+pub fn install_os_service(data_dir: &PathBuf) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let exe_path = std::env::current_exe().context("Failed resolving swm-agent binary path")?;
+    std::fs::create_dir_all(data_dir)
+        .with_context(|| format!("Failed creating data directory {}", data_dir.display()))?;
+    let _ = std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o755));
+
+    let ipc_dir = std::path::Path::new("/var/run/ns8-swm");
+    let _ = std::fs::create_dir_all(ipc_dir);
+    let _ = std::fs::set_permissions(ipc_dir, std::fs::Permissions::from_mode(0o755));
+
+    let content = render_launchd_daemon_plist(
+        &exe_path.to_string_lossy(),
+        &data_dir.to_string_lossy(),
+    );
+    std::fs::write(LAUNCHD_DAEMON_PLIST_PATH, content.as_bytes()).with_context(|| {
+        format!("Failed writing {LAUNCHD_DAEMON_PLIST_PATH} (run as root)")
+    })?;
+    let _ = std::fs::set_permissions(
+        LAUNCHD_DAEMON_PLIST_PATH,
+        std::fs::Permissions::from_mode(0o644),
+    );
+
+    let domain_target = format!("system/{LAUNCHD_DAEMON_LABEL}");
+    let _ = std::process::Command::new("/bin/launchctl")
+        .args(["bootout", &domain_target])
+        .status();
+    let boot = std::process::Command::new("/bin/launchctl")
+        .args(["bootstrap", "system", LAUNCHD_DAEMON_PLIST_PATH])
+        .status();
+    if !boot.map(|s| s.success()).unwrap_or(false) {
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(["load", "-w", LAUNCHD_DAEMON_PLIST_PATH])
+            .status();
+    }
+    let _ = std::process::Command::new("/bin/launchctl")
+        .args(["enable", &domain_target])
+        .status();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn uninstall_os_service() -> Result<()> {
+    let domain_target = format!("system/{LAUNCHD_DAEMON_LABEL}");
+    let bootout = std::process::Command::new("/bin/launchctl")
+        .args(["bootout", &domain_target])
+        .status();
+    if !bootout.map(|s| s.success()).unwrap_or(false) {
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(["unload", "-w", LAUNCHD_DAEMON_PLIST_PATH])
+            .status();
+    }
+    if std::path::Path::new(LAUNCHD_DAEMON_PLIST_PATH).exists() {
+        std::fs::remove_file(LAUNCHD_DAEMON_PLIST_PATH)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn install_os_service(data_dir: &PathBuf) -> Result<()> {
     let exe_path = std::env::current_exe().context("Failed resolving swm-agent binary path")?;
     let content = render_systemd_unit(
@@ -138,7 +269,7 @@ pub fn install_os_service(data_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn uninstall_os_service() -> Result<()> {
     let _ = std::process::Command::new("systemctl")
         .args(["disable", "--now", "swm-agent.service"])
@@ -277,6 +408,34 @@ mod tests {
         assert_eq!(
             flag_cmd.join(" "),
             "failureflag NS8SoftwareManagerAgent 1"
+        );
+    }
+
+    #[test]
+    fn test_launchd_daemon_plist_and_watchdog_commands() {
+        let plist = render_launchd_daemon_plist(
+            "/usr/local/bin/swm-agent",
+            "/Library/Application Support/NS8-SoftwareManager",
+        );
+        assert!(!plist.contains("\r\n"));
+        assert!(plist.contains("<string>org.nethserver.swm-agent</string>"));
+        assert!(plist.contains("<string>/usr/local/bin/swm-agent</string>"));
+        assert!(plist.contains("<string>/Library/Application Support/NS8-SoftwareManager</string>"));
+        assert!(plist.contains("<key>KeepAlive</key>\n    <true/>"));
+        assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
+
+        let (kick, boot) = macos_watchdog_launchctl_commands(501);
+        assert_eq!(
+            kick,
+            vec!["kickstart", "-k", "gui/501/org.nethserver.swm-center"]
+        );
+        assert_eq!(
+            boot,
+            vec![
+                "bootstrap",
+                "gui/501",
+                "/Library/LaunchAgents/org.nethserver.swm-center.plist"
+            ]
         );
     }
 }

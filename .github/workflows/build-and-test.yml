@@ -40,6 +40,7 @@ jobs:
           import ast, pathlib
           targets = (
               list(pathlib.Path('imageroot').rglob('*'))
+              + list(pathlib.Path('agent/packaging/macos').rglob('*'))
               + [
                   pathlib.Path('build-images.sh'),
                   pathlib.Path('Containerfile'),
@@ -97,6 +98,9 @@ jobs:
           - os: windows-latest
             platform: windows
             artifact_name: agents-windows-amd64
+          - os: macos-latest
+            platform: macos
+            artifact_name: agents-macos-universal
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -116,11 +120,34 @@ jobs:
       - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add Apple Silicon & Intel Rust targets (macOS Universal)
+        if: matrix.platform == 'macos'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       - name: Run Cargo workspace tests
         run: cargo test --manifest-path agent/Cargo.toml --workspace
 
-      - name: Build release binaries
+      - name: Build release binaries (Linux & Windows)
+        if: matrix.platform != 'macos'
         run: cargo build --release --manifest-path agent/Cargo.toml --workspace
+
+      - name: Build macOS Universal release binaries (Apple Silicon + Intel via lipo)
+        if: matrix.platform == 'macos'
+        run: |
+          cargo build --release --manifest-path agent/Cargo.toml --workspace --target aarch64-apple-darwin
+          cargo build --release --manifest-path agent/Cargo.toml --workspace --target x86_64-apple-darwin
+          mkdir -p agent/target/release
+          lipo -create \
+            agent/target/aarch64-apple-darwin/release/swm-agent \
+            agent/target/x86_64-apple-darwin/release/swm-agent \
+            -output agent/target/release/swm-agent
+          lipo -create \
+            agent/target/aarch64-apple-darwin/release/swm-center \
+            agent/target/x86_64-apple-darwin/release/swm-center \
+            -output agent/target/release/swm-center
+          chmod +x agent/target/release/swm-agent agent/target/release/swm-center
+          lipo -archs agent/target/release/swm-agent
+          lipo -archs agent/target/release/swm-center
 
       - name: Install nFPM packager (Linux)
         if: matrix.platform == 'linux'
@@ -179,16 +206,26 @@ jobs:
           name: agents-linux-amd64
           path: prebuilt-agents/linux
 
-      - name: Verify staged Windows & Linux binaries
+      - name: Download prebuilt macOS Universal client binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: agents-macos-universal
+          path: prebuilt-agents/macos-universal
+
+      - name: Verify staged Windows, Linux & macOS Universal binaries
         run: |
           find prebuilt-agents/windows -mindepth 2 -type f -name "*.exe" -exec mv -f {} prebuilt-agents/windows/ \; || true
           find prebuilt-agents/linux -mindepth 2 -type f \( -name "swm-agent" -o -name "swm-center" \) -exec mv -f {} prebuilt-agents/linux/ \; || true
+          find prebuilt-agents/macos-universal -mindepth 2 -type f \( -name "swm-agent" -o -name "swm-center" \) -exec mv -f {} prebuilt-agents/macos-universal/ \; || true
           chmod +x prebuilt-agents/linux/swm-agent prebuilt-agents/linux/swm-center
+          chmod +x prebuilt-agents/macos-universal/swm-agent prebuilt-agents/macos-universal/swm-center
           test -f prebuilt-agents/windows/swm-agent.exe
           test -f prebuilt-agents/windows/swm-center.exe
           test -f prebuilt-agents/linux/swm-agent
           test -f prebuilt-agents/linux/swm-center
-          ls -lh prebuilt-agents/windows/ prebuilt-agents/linux/
+          test -f prebuilt-agents/macos-universal/swm-agent
+          test -f prebuilt-agents/macos-universal/swm-center
+          ls -lh prebuilt-agents/windows/ prebuilt-agents/linux/ prebuilt-agents/macos-universal/
 
       - name: Log in to GitHub Container Registry (GHCR) on push
         if: github.event_name == 'push'

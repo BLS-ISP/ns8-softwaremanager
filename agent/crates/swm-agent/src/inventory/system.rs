@@ -47,9 +47,74 @@ pub fn parse_os_release(content: &str) -> HashMap<String, String> {
 pub fn detect_os_family() -> &'static str {
     if cfg!(windows) {
         "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
     } else {
         "linux"
     }
+}
+
+/// Parses `/usr/bin/sw_vers` output into `(ProductName, ProductVersion, BuildVersion)`.
+pub fn parse_sw_vers(output: &str) -> (String, String, String) {
+    let mut product_name = String::new();
+    let mut product_version = String::new();
+    let mut build_version = String::new();
+
+    for line in output.lines() {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        let val = v.trim().to_string();
+        match k.trim() {
+            "ProductName" => product_name = val,
+            "ProductVersion" => product_version = val,
+            "BuildVersion" => build_version = val,
+            _ => {}
+        }
+    }
+
+    (product_name, product_version, build_version)
+}
+
+/// Parses `/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice` output and extracts `"IOPlatformUUID"`.
+pub fn parse_ioreg_platform_uuid(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        let key = lhs.trim().trim_matches('"').trim();
+        if key != "IOPlatformUUID" {
+            continue;
+        }
+        let val = if let Some((_, after_open)) = rhs.split_once('"') {
+            after_open
+                .split_once('"')
+                .map(|(inner, _)| inner.trim())
+                .unwrap_or_else(|| after_open.trim())
+        } else {
+            rhs.trim()
+        };
+        if !val.is_empty() {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+/// Checks `ps -axo comm=` output for an exact executable basename match (e.g. `swm-center`).
+pub fn parse_ps_comm_has_process(output: &str, target_name: &str) -> bool {
+    let target_trimmed = target_name.trim();
+    if target_trimmed.is_empty() {
+        return false;
+    }
+    output.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let base = trimmed.rsplit('/').next().unwrap_or(trimmed);
+        base == target_trimmed
+    })
 }
 
 pub fn collect_machine_uid(hostname: &str) -> String {
@@ -69,7 +134,22 @@ pub fn collect_machine_uid(hostname: &str) -> String {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("/usr/sbin/ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .output()
+        {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if let Some(uuid) = parse_ioreg_platform_uuid(&stdout) {
+                    return uuid;
+                }
+            }
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
             if let Ok(id) = fs::read_to_string(path) {
@@ -120,6 +200,26 @@ fn detect_domain() -> String {
 fn collect_logged_in_users() -> Vec<String> {
     let mut users = BTreeSet::new();
 
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("/usr/bin/stat")
+            .args(["-f", "%Su", "/dev/console"])
+            .output()
+        {
+            if out.status.success() {
+                let console_user = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !console_user.is_empty()
+                    && !matches!(
+                        console_user.as_str(),
+                        "root" | "_mbsetupuser" | "loginwindow" | "nobody" | "daemon"
+                    )
+                {
+                    users.insert(console_user);
+                }
+            }
+        }
+    }
+
     #[cfg(unix)]
     {
         if let Ok(out) = std::process::Command::new("who").output() {
@@ -127,7 +227,7 @@ fn collect_logged_in_users() -> Vec<String> {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 for line in stdout.lines() {
                     if let Some(user) = line.split_whitespace().next() {
-                        if !user.is_empty() {
+                        if !user.is_empty() && user != "root" && user != "_mbsetupuser" {
                             users.insert(user.to_string());
                         }
                     }
@@ -141,6 +241,7 @@ fn collect_logged_in_users() -> Vec<String> {
             let trimmed = val.trim();
             if !trimmed.is_empty()
                 && !trimmed.eq_ignore_ascii_case("SYSTEM")
+                && !trimmed.eq_ignore_ascii_case("root")
                 && !trimmed.ends_with('$')
             {
                 users.insert(trimmed.to_string());
@@ -186,13 +287,39 @@ pub fn detect_swm_center_running() -> bool {
         false
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("/usr/bin/pgrep")
+            .args(["-x", "swm-center"])
+            .output()
+        {
+            if out.status.success() {
+                return true;
+            }
+        }
+        if let Ok(out) = std::process::Command::new("/bin/ps")
+            .args(["-axo", "comm="])
+            .output()
+        {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if parse_ps_comm_has_process(&stdout, "swm-center") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Ok(out) = std::process::Command::new("pgrep")
             .args(["-x", "swm-center"])
             .output()
         {
-            return out.status.success();
+            if out.status.success() {
+                return true;
+            }
         }
         if let Ok(entries) = fs::read_dir("/proc") {
             for entry in entries.flatten() {
@@ -204,6 +331,17 @@ pub fn detect_swm_center_running() -> bool {
                             return true;
                         }
                     }
+                }
+            }
+        }
+        if let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "comm="])
+            .output()
+        {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if parse_ps_comm_has_process(&stdout, "swm-center") {
+                    return true;
                 }
             }
         }
@@ -221,12 +359,37 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
     let domain = detect_domain();
     let os_family = detect_os_family().to_string();
 
+    #[allow(unused_mut)]
     let (mut os_name, mut os_version) = (
         System::name().unwrap_or_else(|| os_family.clone()),
         System::os_version().unwrap_or_else(|| "unknown".to_string()),
     );
+    #[allow(unused_mut)]
+    let mut kernel_or_build = System::kernel_version().unwrap_or_else(|| "unknown".to_string());
 
-    if !cfg!(windows) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("/usr/bin/sw_vers").output() {
+            if out.status.success() {
+                let (prod_name, prod_ver, build_ver) =
+                    parse_sw_vers(&String::from_utf8_lossy(&out.stdout));
+                if !prod_name.is_empty() {
+                    os_name = prod_name;
+                } else {
+                    os_name = "macOS".to_string();
+                }
+                if !prod_ver.is_empty() {
+                    os_version = prod_ver;
+                }
+                if !build_ver.is_empty() {
+                    kernel_or_build = build_ver;
+                }
+            }
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
         if let Ok(os_rel_raw) = fs::read_to_string("/etc/os-release") {
             let parsed = parse_os_release(&os_rel_raw);
             if let Some(pretty) = parsed.get("PRETTY_NAME").or_else(|| parsed.get("NAME")) {
@@ -238,7 +401,6 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
         }
     }
 
-    let kernel_or_build = System::kernel_version().unwrap_or_else(|| "unknown".to_string());
     let arch = normalize_arch(std::env::consts::ARCH);
     let machine_uid = collect_machine_uid(&hostname);
 
@@ -282,12 +444,27 @@ pub fn collect_system_snapshot() -> SystemSnapshot {
             }
         }
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     if let Ok(out) = std::process::Command::new("hostname").arg("-I").output() {
         if out.status.success() {
             for tok in String::from_utf8_lossy(&out.stdout).split_whitespace() {
                 if !tok.starts_with("127.") && !tok.starts_with("fe80:") && tok != "::1" {
                     ips.insert(tok.to_string());
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    for iface in ["en0", "en1"] {
+        if let Ok(out) = std::process::Command::new("/usr/sbin/ipconfig")
+            .args(["getifaddr", iface])
+            .output()
+        {
+            if out.status.success() {
+                let addr = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !addr.is_empty() && !addr.starts_with("127.") {
+                    ips.insert(addr);
                 }
             }
         }
@@ -346,5 +523,39 @@ PRETTY_NAME="Rocky Linux 9.4 (Blue Onyx)"
         assert!(!snap.machine_uid.is_empty());
         assert!(snap.hardware.cpu_cores >= 1);
         assert!(snap.hardware.ram_total_mb > 0);
+    }
+
+    #[test]
+    fn test_inventory_macos_sw_vers_ioreg_and_ps_comm_parsers() {
+        let sw_vers_sample = "\
+ProductName:\t\tmacOS
+ProductVersion:\t\t15.1.1
+BuildVersion:\t\t24B91
+";
+        let (prod, ver, build) = parse_sw_vers(sw_vers_sample);
+        assert_eq!(prod, "macOS");
+        assert_eq!(ver, "15.1.1");
+        assert_eq!(build, "24B91");
+
+        let ioreg_sample = r#"
++-o Mac14,7  <class IOPlatformExpertDevice, id 0x100000112, registered, matched, active, busy 0 (0 ms), retain 36>
+  {
+    "IOPlatformSerialNumber" = "C02XYZ123456"
+    "IOPlatformUUID" = "550E8400-E29B-41D4-A716-446655440000"
+  }
+"#;
+        assert_eq!(
+            parse_ioreg_platform_uuid(ioreg_sample).as_deref(),
+            Some("550E8400-E29B-41D4-A716-446655440000")
+        );
+        assert_eq!(parse_ioreg_platform_uuid("no uuid here"), None);
+
+        let ps_out = "\
+/sbin/launchd
+/usr/sbin/syslogd
+/Applications/NS8 Software Center.app/Contents/MacOS/swm-center
+";
+        assert!(parse_ps_comm_has_process(ps_out, "swm-center"));
+        assert!(!parse_ps_comm_has_process(ps_out, "swm-center-helper"));
     }
 }

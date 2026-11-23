@@ -44,7 +44,7 @@
                 v-if="loading.version"
                 class="version-skeleton"
               />
-              <span v-else>{{ version || "1.1.0" }}</span>
+              <span v-else>{{ version || "1.2.0" }}</span>
             </section>
 
             <section v-if="app.categories && app.categories.length">

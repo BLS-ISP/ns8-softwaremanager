@@ -9,11 +9,14 @@ use swm_common::{
 };
 
 pub const DEFAULT_WINDOWS_DATA_DIR: &str = r"C:\ProgramData\NS8-SoftwareManager";
+pub const DEFAULT_MACOS_DATA_DIR: &str = "/Library/Application Support/NS8-SoftwareManager";
 pub const DEFAULT_LINUX_DATA_DIR: &str = "/etc/ns8-swm";
 
 pub fn default_data_dir() -> PathBuf {
     if cfg!(windows) {
         PathBuf::from(DEFAULT_WINDOWS_DATA_DIR)
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from(DEFAULT_MACOS_DATA_DIR)
     } else {
         PathBuf::from(DEFAULT_LINUX_DATA_DIR)
     }

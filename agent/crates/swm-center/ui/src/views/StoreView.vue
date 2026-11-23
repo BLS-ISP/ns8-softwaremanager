@@ -367,6 +367,10 @@ function sourceBadge(src: string): string {
       return 'DNF';
     case 'flatpak':
       return 'Flatpak';
+    case 'brew':
+      return 'Homebrew';
+    case 'brew_cask':
+      return 'Homebrew Cask';
     default:
       return 'NS8 Paket';
   }
