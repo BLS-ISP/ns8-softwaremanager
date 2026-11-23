@@ -3,6 +3,13 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.6] - 2026-11-23
+
+### Fixed
+- **Reiner NethServer-8-Cockpit-Stil ohne CSS-Überlagerung (`ui/`):**
+  - Doppelten Import von `carbon-components.min.css`, den fehlerhaften `top: 3rem`-Abstand der Seitenleiste im Iframe sowie das `:active`-Light-Theme-Binding auf `<cv-side-nav-link>` entfernt, sodass `/cluster-admin/css/core.css` unverfälscht greift (kein weißer Balken über dem Instanznamen und kein weiß-auf-weißer aktiver Menüpunkt mehr).
+  - `Status.vue`, `Settings.vue` und `About.vue` vollständig auf native NS8-Standardkomponenten (`cv-grid`, `NsInfoCard`, `NsTag`, `NsInlineNotification`, `cv-structured-list`, `NsEmptyState`) analog zu den übrigen BLS-ISP-NS8-Modulen umgestellt.
+
 ## [1.0.5] - 2026-11-23
 
 ### Added

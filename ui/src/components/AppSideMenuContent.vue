@@ -3,13 +3,12 @@
     <div class="instance-name">
       <div v-if="instanceLabel">{{ instanceLabel }}</div>
       <div v-else-if="instanceName">{{ instanceName }}</div>
-      <cv-skeleton-text v-else :heading="true" width="8rem" />
+      <cv-skeleton-text v-else :width="instanceNameSkeletonWidth" />
     </div>
 
     <cv-side-nav-items>
       <cv-side-nav-link
         @click="navigateToPage('status')"
-        :active="isLinkActive('status')"
         :class="{ 'current-page': isLinkActive('status') }"
       >
         <template v-slot:nav-icon>
@@ -20,7 +19,6 @@
 
       <cv-side-nav-link
         @click="navigateToPage('settings')"
-        :active="isLinkActive('settings')"
         :class="{ 'current-page': isLinkActive('settings') }"
       >
         <template v-slot:nav-icon>
@@ -31,7 +29,6 @@
 
       <cv-side-nav-link
         @click="navigateToPage('about')"
-        :active="isLinkActive('about')"
         :class="{ 'current-page': isLinkActive('about') }"
       >
         <template v-slot:nav-icon>
@@ -58,6 +55,11 @@ export default {
     Information20,
   },
   mixins: [QueryParamService, UtilService],
+  data() {
+    return {
+      instanceNameSkeletonWidth: "70%",
+    };
+  },
   computed: {
     ...mapState(["instanceName", "instanceLabel", "core"]),
   },
@@ -85,23 +87,20 @@ export default {
     },
     navigateToPage(page) {
       if (this.core && this.core.$router) {
-        // Official @nethserver/ns8-ui-lib UtilService method: navigates parent to `/apps/<instanceName>?page=<page>`
         this.goToAppPage(this.instanceName, page);
       } else if (this.$route.path !== `/${page}`) {
         this.$router.push(`/${page}`).catch(() => {});
       }
-      this.$store.dispatch("setAppSideMenuShownInStore", false);
+      this.$root.$emit("closeMobileSideMenu");
     },
   },
 };
 </script>
 
 <style scoped lang="scss">
-.instance-name {
-  padding: 1rem 1rem 0.75rem;
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: #f4f4f4;
-  border-bottom: 1px solid #393939;
+.instance-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

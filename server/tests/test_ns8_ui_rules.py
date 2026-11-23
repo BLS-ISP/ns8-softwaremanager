@@ -127,3 +127,24 @@ def test_ns8_ui_rule_4_iframe_navigation_and_query_param_routing() -> None:
         assert "/settings`" not in txt, (
             f"{vue_path.name} pushes invalid parent sub-route `/apps/.../settings` instead of `?page=settings`"
         )
+
+
+def test_ns8_ui_rule_5_pure_ns8_core_css_no_carbon_override() -> None:
+    """UI Rule 5: Do not re-import carbon-components.min.css over /cluster-admin/css/core.css or bind :active on cv-side-nav-link."""
+    index_html = (UI_DIR / "public" / "index.html").read_text(encoding="utf-8")
+    assert "/cluster-admin/css/core.css" in index_html
+    assert 'id="ns8-app"' in index_html
+
+    for asset in list((UI_DIR / "src").rglob("*.vue")) + list(
+        (UI_DIR / "src").rglob("*.scss")
+    ) + list((UI_DIR / "src").rglob("*.js")):
+        txt = asset.read_text(encoding="utf-8")
+        assert "carbon-components.min.css" not in txt, (
+            f"{asset.name} imports carbon-components.min.css and overrides NS8 core.css"
+        )
+
+    side_menu_content = (
+        UI_DIR / "src" / "components" / "AppSideMenuContent.vue"
+    ).read_text(encoding="utf-8")
+    assert ":active=" not in side_menu_content
+    assert "current-page" in side_menu_content

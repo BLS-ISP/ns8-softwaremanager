@@ -1,321 +1,341 @@
 <template>
-  <div class="ns-page-content">
-    <!-- Top Page Header & Primary Actions -->
-    <div class="page-toolbar">
-      <div class="status-brand">
-        <img
-          class="status-logo"
-          src="assets/module_default_logo.svg"
-          alt="SoftwareManager"
+  <cv-grid fullWidth>
+    <cv-row>
+      <cv-column class="page-title">
+        <h2>{{ $t("status.title") }}</h2>
+      </cv-column>
+    </cv-row>
+
+    <cv-row v-if="error.getStatus">
+      <cv-column>
+        <NsInlineNotification
+          kind="error"
+          :title="$t('action.get-status')"
+          :description="error.getStatus"
+          :showCloseButton="false"
         />
-        <div>
-          <h2 class="page-title">{{ $t("status.title") }}</h2>
-          <p class="page-subtitle">{{ $t("status.subtitle") }}</p>
-        </div>
-      </div>
+      </cv-column>
+    </cv-row>
 
-      <div class="toolbar-actions" v-if="config && config.app_url">
-        <NsButton
-          kind="tertiary"
-          :icon="Laptop20"
-          @click="openEnrollmentWizard"
+    <cv-row v-if="error.getConfiguration">
+      <cv-column>
+        <NsInlineNotification
+          kind="error"
+          :title="$t('action.get-configuration')"
+          :description="error.getConfiguration"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+
+    <cv-row v-if="!loadingConfig && (!config || !config.configured)">
+      <cv-column>
+        <NsInlineNotification
+          kind="warning"
+          :title="$t('status.not_configured_title')"
+          :description="$t('status.not_configured_description')"
+          :actionLabel="$t('status.go_to_settings')"
+          @action="goToSettings"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+
+    <cv-row v-if="!loadingConfig && config && config.configured && config.app_url">
+      <cv-column>
+        <NsInlineNotification
+          kind="info"
+          :title="$t('status.onboarding_title')"
+          :description="$t('status.onboarding_subtitle', { url: config.app_url })"
+          :actionLabel="$t('status.open_rollout_wizard')"
+          @action="openEnrollmentWizard"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
+
+    <!-- Summary Cards -->
+    <cv-row>
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :wrapTitle="true"
+          :title="
+            config && config.domain_name
+              ? config.domain_name
+              : $t('status.not_configured_short')
+          "
+          :description="$t('status.configuration_summary')"
+          :icon="Application32"
+          :loading="loadingConfig"
+          class="min-height-card"
         >
-          {{ $t("status.open_enrollment") }}
-        </NsButton>
-        <NsButton
-          kind="primary"
-          :icon="Launch20"
-          @click="openAdminConsole"
+          <template slot="content">
+            <div class="card-rows">
+              <div v-if="config && config.app_url" class="card-row">
+                <cv-link
+                  :href="config.app_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {{ $t("status.open_webapp") }}
+                  <Launch16 class="inline-launch" />
+                </cv-link>
+              </div>
+              <div v-if="config && config.configured" class="card-tags">
+                <NsTag
+                  :label="
+                    config.lets_encrypt
+                      ? 'Let\'s Encrypt'
+                      : $t('status.tls_default')
+                  "
+                  :kind="config.lets_encrypt ? 'green' : 'gray'"
+                  size="sm"
+                />
+                <NsTag
+                  :label="config.ldap_domain || $t('status.local_only')"
+                  :kind="config.ldap_domain ? 'cyan' : 'gray'"
+                  size="sm"
+                />
+              </div>
+            </div>
+          </template>
+        </NsInfoCard>
+      </cv-column>
+
+      <cv-column :md="4" :max="4">
+        <NsInfoCard
+          light
+          :wrapTitle="true"
+          :title="
+            status && status.node
+              ? $t('status.node', { node: status.node })
+              : '-'
+          "
+          :description="$t('status.installation_node')"
+          :icon="Chip32"
+          :loading="loadingStatus"
+          class="min-height-card"
         >
-          {{ $t("status.open_webapp") }}
-        </NsButton>
-      </div>
-    </div>
+          <template slot="content">
+            <div class="card-rows">
+              <div v-if="instanceName" class="card-meta">
+                {{ $t("status.app_instance") }}: {{ instanceName }}
+              </div>
+            </div>
+          </template>
+        </NsInfoCard>
+      </cv-column>
 
-    <!-- Unconfigured Banner -->
-    <div v-if="!loadingConfig && (!config || !config.configured)" class="mg-bottom-lg">
-      <NsInlineNotification
-        kind="warning"
-        :title="$t('status.not_configured_title')"
-        :description="$t('status.not_configured_description')"
-        :actionLabel="$t('status.go_to_settings')"
-        @action="goToSettings"
-        :showCloseButton="false"
-      />
-    </div>
+      <cv-column :md="4" :max="4">
+        <NsBackupCard
+          :title="core ? core.$t('backup.title') : 'Backup'"
+          :noBackupMessage="
+            core
+              ? core.$t('backup.no_backup_configured')
+              : 'No backup configured'
+          "
+          :goToBackupLabel="
+            core ? core.$t('backup.go_to_backup') : 'Go to Backup'
+          "
+          :repositoryLabel="
+            core ? core.$t('backup.repository') : 'Repository'
+          "
+          :statusLabel="core ? core.$t('common.status') : 'Status'"
+          :statusSuccessLabel="core ? core.$t('common.success') : 'Success'"
+          :statusNotRunLabel="
+            core
+              ? core.$t('backup.backup_has_not_run_yet')
+              : 'Backup has not run yet'
+          "
+          :statusErrorLabel="core ? core.$t('error.error') : 'Error'"
+          :completedLabel="
+            core ? core.$t('backup.completed') : 'Completed'
+          "
+          :durationLabel="core ? core.$t('backup.duration') : 'Duration'"
+          :totalSizeLabel="
+            core ? core.$t('backup.total_size') : 'Total size'
+          "
+          :totalFileCountLabel="
+            core ? core.$t('backup.total_file_count') : 'Total file count'
+          "
+          :backupDisabledLabel="
+            core ? core.$t('common.disabled') : $t('common.disabled')
+          "
+          :showMoreLabel="
+            core ? core.$t('common.show_more') : 'Show more'
+          "
+          :moduleId="instanceName"
+          :moduleUiName="instanceLabel"
+          :repositories="backupRepositories"
+          :backups="backups"
+          :loading="loadingBackups"
+          :coreContext="core"
+          light
+        />
+      </cv-column>
 
-    <!-- 4-Card Instance & Routing Overview -->
-    <div class="card-grid">
-      <!-- 1. App Instance Card -->
-      <NsInfoCard
-        light
-        :wrapTitle="true"
-        :title="instanceLabel || instanceName || 'softwaremanager'"
-        :description="$t('status.app_instance')"
-        :icon="Application32"
-        :loading="loadingStatus"
-        class="ns-card"
+      <cv-column :md="4" :max="4">
+        <NsSystemLogsCard
+          :title="
+            core
+              ? core.$t('system_logs.card_title') || core.$t('system_logs.title')
+              : 'System logs'
+          "
+          :description="
+            core
+              ? core.$t('system_logs.card_description', {
+                  name: instanceLabel || instanceName,
+                })
+              : instanceName
+          "
+          :buttonLabel="
+            core ? core.$t('system_logs.card_button_label') : 'Open logs'
+          "
+          :router="core ? core.$router : null"
+          context="module"
+          :moduleId="instanceName"
+          light
+        />
+      </cv-column>
+    </cv-row>
+
+    <!-- Services -->
+    <cv-row>
+      <cv-column class="page-subtitle">
+        <h4>{{ $t("status.services") }}</h4>
+      </cv-column>
+    </cv-row>
+    <cv-row v-if="!loadingStatus">
+      <cv-column v-if="!status || !status.services || !status.services.length">
+        <cv-tile light>
+          <NsEmptyState :title="$t('status.no_services')" />
+        </cv-tile>
+      </cv-column>
+      <cv-column
+        v-else
+        v-for="(service, index) in status.services"
+        :key="index"
+        :md="4"
+        :max="4"
       >
-        <template slot="content">
-          <div class="card-slot-body">
-            <div class="kv-list">
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("status.installation_node") }}</span>
-                <span class="kv-value">
-                  {{
-                    status && status.node
-                      ? $t("status.node", { node: status.node })
-                      : "-"
-                  }}
-                </span>
-              </div>
-              <div class="kv-row" v-if="config && config.tcp_port">
-                <span class="kv-label">{{ $t("status.internal_port") }}</span>
-                <span class="kv-value kv-mono">127.0.0.1:{{ config.tcp_port }}</span>
-              </div>
-            </div>
-            <div class="card-cta">
-              <NsButton
-                v-if="config && config.app_url"
-                kind="ghost"
-                :icon="Launch20"
-                @click="openAdminConsole"
-              >
-                {{ $t("status.open_webapp") }}
-              </NsButton>
-              <NsButton
-                v-else
-                kind="ghost"
-                :icon="Settings20"
-                @click="goToSettings"
-              >
-                {{ $t("status.go_to_settings") }}
-              </NsButton>
-            </div>
+        <NsSystemdServiceCard
+          light
+          class="min-height-card"
+          :serviceName="service.name"
+          :active="service.active"
+          :failed="service.failed"
+          :enabled="service.enabled"
+          :icon="Cube32"
+        />
+      </cv-column>
+    </cv-row>
+    <cv-row v-else>
+      <cv-column :md="4" :max="4">
+        <cv-tile light>
+          <cv-skeleton-text :paragraph="true" :line-count="4" />
+        </cv-tile>
+      </cv-column>
+    </cv-row>
+
+    <!-- Images -->
+    <cv-row>
+      <cv-column class="page-subtitle">
+        <h4>{{ $t("status.app_images") }}</h4>
+      </cv-column>
+    </cv-row>
+    <cv-row>
+      <cv-column>
+        <cv-tile light>
+          <div v-if="!loadingStatus">
+            <NsEmptyState
+              v-if="!status || !status.images || !status.images.length"
+              :title="$t('status.no_images')"
+            />
+            <cv-structured-list v-else>
+              <template slot="headings">
+                <cv-structured-list-heading>{{
+                  $t("status.name")
+                }}</cv-structured-list-heading>
+                <cv-structured-list-heading>{{
+                  $t("status.size")
+                }}</cv-structured-list-heading>
+                <cv-structured-list-heading>{{
+                  $t("status.created")
+                }}</cv-structured-list-heading>
+              </template>
+              <template slot="items">
+                <cv-structured-list-item
+                  v-for="(image, index) in status.images"
+                  :key="index"
+                >
+                  <cv-structured-list-data class="break-word">{{
+                    image.name
+                  }}</cv-structured-list-data>
+                  <cv-structured-list-data>{{
+                    formatImageSize(image.size)
+                  }}</cv-structured-list-data>
+                  <cv-structured-list-data class="break-word">{{
+                    formatTimestamp(image.created)
+                  }}</cv-structured-list-data>
+                </cv-structured-list-item>
+              </template>
+            </cv-structured-list>
           </div>
-        </template>
-      </NsInfoCard>
+          <cv-skeleton-text v-else :paragraph="true" :line-count="5" />
+        </cv-tile>
+      </cv-column>
+    </cv-row>
 
-      <!-- 2. Endpoint & Portal Routing Card (always-mounted slot wrapper fixes Vue 2 $slots caching) -->
-      <NsInfoCard
-        light
-        :wrapTitle="true"
-        :title="$t('status.configuration_summary')"
-        :description="config && config.domain_name ? config.domain_name : '-'"
-        :icon="EdgeNode32"
-        :loading="loadingConfig"
-        class="ns-card"
-      >
-        <template slot="content">
-          <div class="card-slot-body">
-            <div v-if="config" class="kv-list">
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("status.lets_encrypt") }}</span>
-                <span class="kv-value">
-                  <span :class="['pill-badge', config.lets_encrypt ? 'pill-green' : 'pill-gray']">
-                    {{ config.lets_encrypt ? $t("common.enabled") : $t("common.disabled") }}
-                  </span>
-                </span>
-              </div>
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("status.http2https") }}</span>
-                <span class="kv-value">
-                  <span :class="['pill-badge', config.http2https ? 'pill-green' : 'pill-gray']">
-                    {{ config.http2https ? $t("common.enabled") : $t("common.disabled") }}
-                  </span>
-                </span>
-              </div>
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("status.ldap_domain") }}</span>
-                <span class="kv-value">
-                  <span v-if="config.ldap_domain" class="pill-badge pill-blue">{{ config.ldap_domain }}</span>
-                  <span v-else>{{ $t("status.local_only") }}</span>
-                </span>
-              </div>
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("status.admin_username") }}</span>
-                <span class="kv-value kv-mono">{{ config.admin_username || "admin" }}</span>
-              </div>
-            </div>
+    <!-- Volumes -->
+    <cv-row>
+      <cv-column class="page-subtitle">
+        <h4>{{ $t("status.app_volumes") }}</h4>
+      </cv-column>
+    </cv-row>
+    <cv-row>
+      <cv-column>
+        <cv-tile light>
+          <div v-if="!loadingStatus">
+            <NsEmptyState
+              v-if="!status || !status.volumes || !status.volumes.length"
+              :title="$t('status.no_volumes')"
+            />
+            <cv-structured-list v-else>
+              <template slot="headings">
+                <cv-structured-list-heading>{{
+                  $t("status.name")
+                }}</cv-structured-list-heading>
+                <cv-structured-list-heading>{{
+                  $t("status.mount")
+                }}</cv-structured-list-heading>
+                <cv-structured-list-heading>{{
+                  $t("status.created")
+                }}</cv-structured-list-heading>
+              </template>
+              <template slot="items">
+                <cv-structured-list-item
+                  v-for="(volume, index) in status.volumes"
+                  :key="index"
+                >
+                  <cv-structured-list-data>{{
+                    volume.name
+                  }}</cv-structured-list-data>
+                  <cv-structured-list-data class="break-word">{{
+                    volume.mount || "-"
+                  }}</cv-structured-list-data>
+                  <cv-structured-list-data>{{
+                    formatTimestamp(volume.created)
+                  }}</cv-structured-list-data>
+                </cv-structured-list-item>
+              </template>
+            </cv-structured-list>
           </div>
-        </template>
-      </NsInfoCard>
-
-      <!-- 3. Backup Card -->
-      <NsBackupCard
-        :title="core ? core.$t('backup.title') : 'Backup'"
-        :noBackupMessage="core ? core.$t('backup.no_backup_configured') : 'No backup configured'"
-        :goToBackupLabel="core ? core.$t('backup.go_to_backup') : 'Go to Backup'"
-        :repositoryLabel="core ? core.$t('backup.repository') : 'Repository'"
-        :statusLabel="core ? core.$t('common.status') : 'Status'"
-        :statusSuccessLabel="core ? core.$t('common.success') : 'Success'"
-        :statusNotRunLabel="core ? core.$t('backup.backup_has_not_run_yet') : 'Not run yet'"
-        :statusErrorLabel="core ? core.$t('error.error') : 'Error'"
-        :completedLabel="core ? core.$t('backup.completed') : 'Completed'"
-        :durationLabel="core ? core.$t('backup.duration') : 'Duration'"
-        :totalSizeLabel="core ? core.$t('backup.total_size') : 'Total size'"
-        :totalFileCountLabel="core ? core.$t('backup.total_file_count') : 'Total files'"
-        :backupDisabledLabel="core ? core.$t('common.disabled') : $t('common.disabled')"
-        :showOnlyMoreInfo="false"
-        :moduleId="instanceName"
-        :moduleUiName="instanceLabel"
-        :repositories="backupRepositories"
-        :backups="backups"
-        :loading="loadingBackups"
-        :coreContext="core"
-        light
-      />
-
-      <!-- 4. System Logs Card -->
-      <NsSystemLogsCard
-        :title="core ? core.$t('system_logs.title') : 'System logs'"
-        :description="
-          core
-            ? core.$t('system_logs.card_description', { name: instanceLabel || instanceName })
-            : instanceName
-        "
-        :buttonLabel="core ? core.$t('system_logs.card_button_label') : 'Open logs'"
-        :router="core ? core.$router : null"
-        context="module"
-        :moduleId="instanceName"
-        light
-      />
-    </div>
-
-    <!-- Client Onboarding & Agent Deployment Guide (shown once configured) -->
-    <cv-tile v-if="config && config.configured && config.app_url" light class="onboarding-tile mg-bottom-lg">
-      <div class="onboarding-header">
-        <div>
-          <h3 class="onboarding-title">{{ $t("status.onboarding_title") }}</h3>
-          <p class="onboarding-subtitle">
-            {{ $t("status.onboarding_subtitle", { url: config.app_url }) }}
-          </p>
-        </div>
-        <NsButton
-          kind="primary"
-          :icon="ArrowRight20"
-          @click="openEnrollmentWizard"
-        >
-          {{ $t("status.open_rollout_wizard") }}
-        </NsButton>
-      </div>
-
-      <div class="onboarding-steps">
-        <div class="step-card">
-          <div class="step-badge">1</div>
-          <div>
-            <h4 class="step-heading">{{ $t("status.step1_title") }}</h4>
-            <p class="step-desc">{{ $t("status.step1_desc") }}</p>
-          </div>
-        </div>
-
-        <div class="step-card">
-          <div class="step-badge">2</div>
-          <div>
-            <h4 class="step-heading">{{ $t("status.step2_title") }}</h4>
-            <p class="step-desc">{{ $t("status.step2_desc") }}</p>
-          </div>
-        </div>
-
-        <div class="step-card">
-          <div class="step-badge">3</div>
-          <div>
-            <h4 class="step-heading">{{ $t("status.step3_title") }}</h4>
-            <p class="step-desc">{{ $t("status.step3_desc") }}</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="onboarding-footer">
-        <div class="endpoint-copy-box">
-          <span class="endpoint-label">{{ $t("status.server_endpoint_label") }}</span>
-          <code class="endpoint-code">{{ config.app_url }}</code>
-          <button
-            type="button"
-            class="copy-inline-btn"
-            @click="copyServerUrl"
-          >
-            <Checkmark16 v-if="copiedUrl" />
-            <Copy16 v-else />
-            <span>{{ copiedUrl ? $t("common.copied") : $t("common.copy") }}</span>
-          </button>
-        </div>
-
-        <div class="binary-links">
-          <a
-            class="binary-link"
-            :href="config.app_url + '/dl/agents/windows/swm-agent.exe'"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Download16 />
-            <span>{{ $t("status.dl_win_agent") }}</span>
-          </a>
-          <a
-            class="binary-link"
-            :href="config.app_url + '/dl/agents/windows/swm-center.exe'"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Download16 />
-            <span>{{ $t("status.dl_win_center") }}</span>
-          </a>
-          <a
-            class="binary-link"
-            :href="config.app_url + '/dl/agents/linux-amd64/swm-agent'"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Download16 />
-            <span>{{ $t("status.dl_linux_agent") }}</span>
-          </a>
-        </div>
-      </div>
-    </cv-tile>
-
-    <!-- Systemd Services Section -->
-    <h4 class="section-heading">{{ $t("status.services") }}</h4>
-    <div class="service-grid" v-if="status && status.services && status.services.length">
-      <NsSystemdServiceCard
-        v-for="service in status.services"
-        :key="service.name"
-        light
-        :serviceName="service.name"
-        :active="service.active"
-        :failed="service.failed"
-        :enabled="service.enabled"
-        :icon="Cube32"
-      />
-    </div>
-    <div v-else-if="!loadingStatus" class="mg-bottom-lg">
-      <cv-tile light>{{ $t("status.no_services") }}</cv-tile>
-    </div>
-
-    <!-- Side-by-Side Container Images & Persistent Volumes -->
-    <div class="two-col-grid">
-      <cv-tile light>
-        <h4 class="tile-heading">{{ $t("status.app_images") }}</h4>
-        <div v-if="status && status.images && status.images.length" class="kv-list">
-          <div v-for="img in status.images" :key="img.name" class="kv-row">
-            <span class="kv-label kv-mono">{{ img.name }}</span>
-            <span class="kv-value kv-mono">{{ formatImageSize(img.size) }}</span>
-          </div>
-        </div>
-        <p v-else class="empty-note">{{ $t("status.no_images") }}</p>
-      </cv-tile>
-
-      <cv-tile light>
-        <h4 class="tile-heading">{{ $t("status.app_volumes") }}</h4>
-        <div v-if="status && status.volumes && status.volumes.length" class="kv-list">
-          <div v-for="vol in status.volumes" :key="vol.name" class="kv-row">
-            <span class="kv-label kv-mono">{{ vol.name }}</span>
-            <span class="kv-value kv-mono">{{ formatVolumeTimestamp(vol) }}</span>
-          </div>
-        </div>
-        <p v-else class="empty-note">{{ $t("status.no_volumes") }}</p>
-      </cv-tile>
-    </div>
-  </div>
+          <cv-skeleton-text v-else :paragraph="true" :line-count="5" />
+        </cv-tile>
+      </cv-column>
+    </cv-row>
+  </cv-grid>
 </template>
 
 <script>
@@ -328,29 +348,17 @@ import {
   UtilService,
   IconService,
 } from "@nethserver/ns8-ui-lib";
-import Launch20 from "@carbon/icons-vue/es/launch/20";
-import Settings20 from "@carbon/icons-vue/es/settings/20";
-import Laptop20 from "@carbon/icons-vue/es/laptop/20";
-import ArrowRight20 from "@carbon/icons-vue/es/arrow--right/20";
-import Copy16 from "@carbon/icons-vue/es/copy/16";
-import Checkmark16 from "@carbon/icons-vue/es/checkmark/16";
-import Download16 from "@carbon/icons-vue/es/download/16";
+import Launch16 from "@carbon/icons-vue/es/launch/16";
 import Application32 from "@carbon/icons-vue/es/application/32";
-import EdgeNode32 from "@carbon/icons-vue/es/edge-node/32";
+import Chip32 from "@carbon/icons-vue/es/chip/32";
 import Cube32 from "@carbon/icons-vue/es/cube/32";
 
 export default {
   name: "Status",
   components: {
-    Launch20,
-    Settings20,
-    Laptop20,
-    ArrowRight20,
-    Copy16,
-    Checkmark16,
-    Download16,
+    Launch16,
     Application32,
-    EdgeNode32,
+    Chip32,
     Cube32,
   },
   mixins: [
@@ -365,15 +373,9 @@ export default {
   },
   data() {
     return {
-      Launch20,
-      Settings20,
-      Laptop20,
-      ArrowRight20,
-      Copy16,
-      Checkmark16,
-      Download16,
+      Launch16,
       Application32,
-      EdgeNode32,
+      Chip32,
       Cube32,
       q: {
         page: "status",
@@ -383,10 +385,13 @@ export default {
       config: null,
       backupRepositories: [],
       backups: [],
-      copiedUrl: false,
       loadingStatus: false,
       loadingConfig: false,
       loadingBackups: false,
+      error: {
+        getStatus: "",
+        getConfiguration: "",
+      },
     };
   },
   computed: {
@@ -413,11 +418,6 @@ export default {
   },
   methods: {
     ...mapActions(["setConfiguredInStore", "setAppUrlInStore"]),
-    openAdminConsole() {
-      if (this.config && this.config.app_url) {
-        window.open(this.config.app_url, "_blank", "noopener,noreferrer");
-      }
-    },
     openEnrollmentWizard() {
       if (this.config && this.config.app_url) {
         window.open(
@@ -427,20 +427,11 @@ export default {
         );
       }
     },
-    async copyServerUrl() {
-      if (!this.config || !this.config.app_url) {
-        return;
-      }
-      try {
-        if (navigator && navigator.clipboard) {
-          await navigator.clipboard.writeText(this.config.app_url);
-          this.copiedUrl = true;
-          setTimeout(() => {
-            this.copiedUrl = false;
-          }, 2000);
-        }
-      } catch (e) {
-        void e;
+    goToSettings() {
+      if (this.core && this.core.$router) {
+        this.goToAppPage(this.instanceName, "settings");
+      } else {
+        this.$router.push("/settings").catch(() => {});
       }
     },
     formatImageSize(size) {
@@ -476,34 +467,19 @@ export default {
       }
       return `${val >= 10 || idx === 0 ? val.toFixed(0) : val.toFixed(1)} ${units[idx]}`;
     },
-    formatVolumeTimestamp(vol) {
-      if (!vol) {
-        return "-";
-      }
-      const raw = vol.created || vol.mount || "";
+    formatTimestamp(raw) {
       if (!raw) {
         return "-";
       }
-      // Match Go timestamp e.g. "2026-11-23 11:58:28.210367265 +0100 CET"
       const goMatch = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/.exec(String(raw));
       if (goMatch) {
         return `${goMatch[1]} ${goMatch[2]}`;
       }
-      const parsed = new Date(raw);
-      if (!Number.isNaN(parsed.getTime())) {
-        return parsed.toLocaleString();
-      }
       return String(raw);
-    },
-    goToSettings() {
-      if (this.core && this.core.$router) {
-        this.goToAppPage(this.instanceName, "settings");
-      } else {
-        this.$router.push("/settings").catch(() => {});
-      }
     },
     async getStatus() {
       this.loadingStatus = true;
+      this.error.getStatus = "";
       const taskAction = "get-status";
       const eventId = this.getUuid();
 
@@ -528,6 +504,7 @@ export default {
       );
       if (err) {
         this.loadingStatus = false;
+        this.error.getStatus = this.$t("error.cannot_retrieve_status");
         this.createErrorNotificationForApp(
           err,
           this.$t("task.cannot_create_task", { action: taskAction })
@@ -538,6 +515,7 @@ export default {
     },
     getStatusAborted(taskResult, taskContext) {
       console.error(`${taskContext.action} aborted`, taskResult);
+      this.error.getStatus = this.$t("error.cannot_retrieve_status");
       this.loadingStatus = false;
     },
     getStatusCompleted(taskContext, taskResult) {
@@ -546,6 +524,7 @@ export default {
     },
     async getConfiguration() {
       this.loadingConfig = true;
+      this.error.getConfiguration = "";
       const taskAction = "get-configuration";
       const eventId = this.getUuid();
 
@@ -570,6 +549,7 @@ export default {
       );
       if (err) {
         this.loadingConfig = false;
+        this.error.getConfiguration = this.$t("error.cannot_retrieve_configuration");
         this.createErrorNotificationForApp(
           err,
           this.$t("task.cannot_create_task", { action: taskAction })
@@ -580,6 +560,7 @@ export default {
     },
     getConfigurationAborted(taskResult, taskContext) {
       console.error(`${taskContext.action} aborted`, taskResult);
+      this.error.getConfiguration = this.$t("error.cannot_retrieve_configuration");
       this.loadingConfig = false;
     },
     getConfigurationCompleted(taskContext, taskResult) {
@@ -674,7 +655,16 @@ export default {
       this.loadingBackups = false;
     },
     listBackupsCompleted(taskContext, taskResult) {
-      this.backups = (taskResult.output && taskResult.output.backups) || [];
+      const backups = (taskResult.output && taskResult.output.backups) || [];
+      for (const backup of backups) {
+        const repo = this.backupRepositories.find(
+          (r) => r.id === backup.repository
+        );
+        if (repo) {
+          backup.repoName = repo.name;
+        }
+      }
+      this.backups = backups;
       this.loadingBackups = false;
     },
   },
@@ -682,211 +672,41 @@ export default {
 </script>
 
 <style scoped lang="scss">
-.page-toolbar {
+@import "../styles/base";
+
+.break-word {
+  word-wrap: break-word;
+  max-width: 30vw;
+}
+
+.card-rows {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
+  text-align: center;
+  width: 100%;
+  gap: $spacing-03;
+  margin-top: $spacing-02;
+}
+
+.card-row {
+  margin-top: $spacing-02;
+}
+
+.card-tags {
+  display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-
-.toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.page-title {
-  margin: 0;
-}
-
-.page-subtitle {
-  margin: 0.2rem 0 0;
-  font-size: 0.875rem;
-  color: #525252;
-}
-
-.status-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.875rem;
-}
-
-.status-logo {
-  width: 2.5rem;
-  height: 2.5rem;
-  flex-shrink: 0;
-}
-
-.card-cta {
-  margin-top: 0.75rem;
-  display: flex;
   justify-content: center;
+  gap: $spacing-02;
 }
 
-.onboarding-tile {
-  border-left: 4px solid #0f62fe;
-  padding: 1.25rem 1.5rem;
-}
-
-.onboarding-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-
-.onboarding-title {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #161616;
-}
-
-.onboarding-subtitle {
-  margin: 0.25rem 0 0;
+.card-meta {
   font-size: 0.875rem;
-  color: #525252;
-  max-width: 54rem;
+  color: $text-02;
 }
 
-.onboarding-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-
-@media (max-width: 1100px) {
-  .onboarding-steps {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.step-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.875rem;
-  background-color: #f4f4f4;
-  padding: 1rem;
-  border: 1px solid #e0e0e0;
-}
-
-.step-badge {
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 9999px;
-  background-color: #0f62fe;
-  color: #ffffff;
-  font-size: 0.875rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.step-heading {
-  margin: 0 0 0.35rem;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: #161616;
-}
-
-.step-desc {
-  margin: 0;
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: #525252;
-}
-
-.onboarding-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #e0e0e0;
-}
-
-.endpoint-copy-box {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.endpoint-label {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: #525252;
-}
-
-.endpoint-code {
-  background-color: #e8e8e8;
-  padding: 0.25rem 0.625rem;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.8125rem;
-  color: #161616;
-}
-
-.copy-inline-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border: 1px solid #8d8d8d;
-  background-color: #ffffff;
-  color: #161616;
-  padding: 0.25rem 0.625rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.copy-inline-btn:hover {
-  background-color: #e8e8e8;
-}
-
-.binary-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.binary-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: #0f62fe;
-  text-decoration: none;
-}
-
-.binary-link:hover {
-  text-decoration: underline;
-}
-
-.section-heading {
-  margin: 0 0 0.75rem;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.tile-heading {
-  margin: 0 0 0.75rem;
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.empty-note {
-  color: #525252;
-  font-size: 0.875rem;
+.inline-launch {
+  vertical-align: middle;
+  margin-left: $spacing-02;
 }
 </style>

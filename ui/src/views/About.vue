@@ -1,20 +1,25 @@
 <template>
-  <div class="ns-page-content">
-    <div class="mg-bottom-lg">
-      <h2>{{ $t("about.title") }}</h2>
-    </div>
+  <cv-grid fullWidth>
+    <cv-row>
+      <cv-column class="page-title">
+        <h2>{{ $t("about.title") }}</h2>
+      </cv-column>
+    </cv-row>
 
-    <div v-if="error.version" class="mg-bottom-md">
-      <NsInlineNotification
-        kind="error"
-        :title="$t('error.cannot_retrieve_installed_modules')"
-        :description="error.version"
-        :showCloseButton="false"
-      />
-    </div>
+    <cv-row v-if="error.version">
+      <cv-column>
+        <NsInlineNotification
+          kind="error"
+          :title="$t('error.cannot_retrieve_installed_modules')"
+          :description="error.version"
+          :showCloseButton="false"
+        />
+      </cv-column>
+    </cv-row>
 
-    <div style="max-width: 56rem">
-      <cv-tile light>
+    <cv-row>
+      <cv-column>
+        <cv-tile light>
           <cv-skeleton-text
             v-if="loading.moduleInfo"
             :paragraph="true"
@@ -22,80 +27,99 @@
           />
 
           <div v-else-if="app">
-            <div class="about-header">
-              <img
-                class="app-logo"
-                src="assets/module_default_logo.svg"
-                :alt="app.name"
+            <div class="logo-and-name">
+              <div class="app-logo">
+                <img src="assets/module_default_logo.svg" :alt="app.name" />
+              </div>
+              <h3>{{ app.name }}</h3>
+            </div>
+
+            <div class="description">
+              {{ getApplicationDescription(app) }}
+            </div>
+
+            <section>
+              <span class="section-title">{{ $t("about.version") }}: </span>
+              <cv-skeleton-text
+                v-if="loading.version"
+                class="version-skeleton"
               />
-              <div>
-                <h3>{{ app.name }}</h3>
-                <p class="app-description">{{ getApplicationDescription(app) }}</p>
-              </div>
-            </div>
+              <span v-else>{{ version || "1.0.6" }}</span>
+            </section>
 
-            <div class="kv-list">
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("about.version") }}</span>
-                <span class="kv-value">{{ version || "1.0.0" }}</span>
-              </div>
+            <section v-if="app.categories && app.categories.length">
+              <span class="section-title">{{ $t("about.categories") }}: </span>
+              <span>{{ app.categories.join(", ") }}</span>
+            </section>
 
-              <div class="kv-row" v-if="app.categories && app.categories.length">
-                <span class="kv-label">{{ $t("about.categories") }}</span>
-                <span class="kv-value">{{ app.categories.join(", ") }}</span>
-              </div>
+            <section v-if="app.docs && app.docs.documentation_url">
+              <span class="section-title"
+                >{{ $t("about.documentation") }}:
+              </span>
+              <cv-link :href="app.docs.documentation_url" target="_blank">
+                {{ app.docs.documentation_url }}
+              </cv-link>
+            </section>
 
-              <div class="kv-row" v-if="app.docs && app.docs.documentation_url">
-                <span class="kv-label">{{ $t("about.documentation") }}</span>
-                <span class="kv-value">
-                  <cv-link :href="app.docs.documentation_url" target="_blank">
-                    {{ app.docs.documentation_url }}
-                    <Launch20 class="inline-icon" />
+            <section v-if="app.docs && app.docs.bug_url">
+              <span class="section-title"
+                >{{ $t("about.bug_tracker") }}:
+              </span>
+              <cv-link :href="app.docs.bug_url" target="_blank">
+                {{ app.docs.bug_url }}
+              </cv-link>
+            </section>
+
+            <section v-if="app.docs && app.docs.code_url">
+              <span class="section-title"
+                >{{ $t("about.source_code") }}:
+              </span>
+              <cv-link :href="app.docs.code_url" target="_blank">
+                {{ app.docs.code_url }}
+              </cv-link>
+            </section>
+
+            <section v-if="app.authors && app.authors.length">
+              <span class="section-title">{{ $t("about.authors") }}: </span>
+              <span v-if="app.authors.length === 1">
+                {{ app.authors[0].name }}
+                <cv-link
+                  v-if="app.authors[0].email"
+                  :href="'mailto:' + app.authors[0].email"
+                  target="_blank"
+                  class="email"
+                >
+                  {{ app.authors[0].email }}
+                </cv-link>
+              </span>
+              <ul v-else class="authors">
+                <li
+                  v-for="(author, idx) in app.authors"
+                  :key="idx"
+                  class="author"
+                >
+                  {{ author.name }}
+                  <cv-link
+                    v-if="author.email"
+                    :href="'mailto:' + author.email"
+                    target="_blank"
+                    class="email"
+                  >
+                    {{ author.email }}
                   </cv-link>
-                </span>
-              </div>
+                </li>
+              </ul>
+            </section>
 
-              <div class="kv-row" v-if="app.docs && app.docs.bug_url">
-                <span class="kv-label">{{ $t("about.bug_tracker") }}</span>
-                <span class="kv-value">
-                  <cv-link :href="app.docs.bug_url" target="_blank">
-                    {{ app.docs.bug_url }}
-                    <Launch20 class="inline-icon" />
-                  </cv-link>
-                </span>
-              </div>
-
-              <div class="kv-row" v-if="app.docs && app.docs.code_url">
-                <span class="kv-label">{{ $t("about.source_code") }}</span>
-                <span class="kv-value">
-                  <cv-link :href="app.docs.code_url" target="_blank">
-                    {{ app.docs.code_url }}
-                    <Launch20 class="inline-icon" />
-                  </cv-link>
-                </span>
-              </div>
-
-              <div class="kv-row" v-if="app.authors && app.authors.length">
-                <span class="kv-label">{{ $t("about.authors") }}</span>
-                <span class="kv-value">
-                  <span v-for="(author, idx) in app.authors" :key="idx">
-                    {{ author.name }} ({{ author.email }})<span
-                      v-if="idx < app.authors.length - 1"
-                      >,
-                    </span>
-                  </span>
-                </span>
-              </div>
-
-              <div class="kv-row">
-                <span class="kv-label">{{ $t("about.license") }}</span>
-                <span class="kv-value">GPL-3.0-or-later</span>
-              </div>
-            </div>
+            <section>
+              <span class="section-title">{{ $t("about.license") }}: </span>
+              <span>GPL-3.0-or-later</span>
+            </section>
           </div>
         </cv-tile>
-    </div>
-  </div>
+      </cv-column>
+    </cv-row>
+  </cv-grid>
 </template>
 
 <script>
@@ -108,20 +132,16 @@ import {
   PageTitleService,
   QueryParamService,
 } from "@nethserver/ns8-ui-lib";
-import Launch20 from "@carbon/icons-vue/es/launch/20";
 
 export default {
   name: "About",
-  components: {
-    Launch20,
-  },
+  components: {},
   mixins: [TaskService, UtilService, PageTitleService, QueryParamService],
   pageTitle() {
     return this.$t("about.title") + " - " + this.appName;
   },
   data() {
     return {
-      Launch20,
       q: {
         page: "about",
       },
@@ -208,7 +228,9 @@ export default {
       );
       if (err) {
         this.loading.version = false;
-        this.error.version = this.$t("error.cannot_retrieve_installed_modules");
+        this.error.version = this.$t(
+          "error.cannot_retrieve_installed_modules"
+        );
         this.createErrorNotificationForApp(
           err,
           this.$t("task.cannot_create_task", { action: taskAction })
@@ -238,26 +260,56 @@ export default {
 </script>
 
 <style scoped lang="scss">
-.about-header {
+@import "../styles/base";
+
+.logo-and-name {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+  margin-top: $spacing-05;
+  margin-bottom: $spacing-07;
 }
 
 .app-logo {
-  width: 3.5rem;
-  height: 3.5rem;
+  max-width: 4rem;
+  max-height: 4rem;
+  margin-right: $spacing-05;
   flex-shrink: 0;
 }
 
-.app-description {
-  color: #525252;
-  margin-top: 0.25rem;
+.app-logo img {
+  width: 100%;
+  height: 100%;
 }
 
-.inline-icon {
-  vertical-align: middle;
-  margin-left: 0.25rem;
+.description {
+  margin-bottom: $spacing-07;
+}
+
+section {
+  margin-bottom: $spacing-05;
+}
+
+.section-title {
+  font-weight: bold;
+}
+
+.author {
+  margin-left: $spacing-05;
+  margin-bottom: $spacing-02;
+}
+
+.authors {
+  margin-top: $spacing-02;
+}
+
+.email {
+  margin-left: $spacing-02;
+}
+
+.version-skeleton {
+  display: inline-flex;
+  width: 3rem !important;
+  position: relative;
+  top: 1px;
 }
 </style>

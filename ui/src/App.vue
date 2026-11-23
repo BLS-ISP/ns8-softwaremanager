@@ -1,10 +1,8 @@
 <template>
-  <div id="ns8-app" class="bx--body">
-    <cv-side-nav id="app-side-nav" :fixed="true" :expanded="true" class="app-side-nav">
-      <AppSideMenuContent />
-    </cv-side-nav>
-    <AppMobileSideMenu />
-    <cv-content id="main-content" class="ns-app-main-content">
+  <div id="ns8-app">
+    <cv-content id="main-content" class="app-content">
+      <AppSideMenu />
+      <AppMobileSideMenu />
       <router-view />
     </cv-content>
   </div>
@@ -18,13 +16,13 @@ import {
   UtilService,
 } from "@nethserver/ns8-ui-lib";
 import to from "await-to-js";
-import AppSideMenuContent from "./components/AppSideMenuContent.vue";
+import AppSideMenu from "./components/AppSideMenu.vue";
 import AppMobileSideMenu from "./components/AppMobileSideMenu.vue";
 
 export default {
   name: "App",
   components: {
-    AppSideMenuContent,
+    AppSideMenu,
     AppMobileSideMenu,
   },
   mixins: [QueryParamService, TaskService, UtilService],
@@ -59,7 +57,6 @@ export default {
     }
     this.setInstanceNameInStore(instanceName);
 
-    // Sync active user locale synchronously (en + de are pre-bundled in main.js)
     if (core && core.$i18n && core.$i18n.locale) {
       const normalized = String(core.$i18n.locale).substring(0, 2).toLowerCase();
       if (normalized === "en" || normalized === "de") {
@@ -79,7 +76,7 @@ export default {
       this.retrieveInstanceLabel();
     }
 
-    // Honor initial `?page=` query parameter from NS8 parent URL (e.g. `?page=settings`)
+    // Honor initial `?page=` query parameter from NS8 parent URL
     const queryParams = this.getQueryParamsForApp();
     const requestedPage = (queryParams && queryParams.page) || "status";
     if (requestedPage !== "status") {
@@ -144,27 +141,5 @@ export default {
 </script>
 
 <style lang="scss">
-@import "~carbon-components/css/carbon-components.min.css";
 @import "./styles/base";
-
-.app-side-nav {
-  top: 3rem;
-}
-
-.ns-app-main-content {
-  margin-left: 16rem;
-  margin-top: 0;
-  background-color: #f4f4f4;
-  min-height: 100vh;
-}
-
-@media (max-width: 1055px) {
-  .app-side-nav {
-    display: none;
-  }
-
-  .ns-app-main-content {
-    margin-left: 0;
-  }
-}
 </style>
