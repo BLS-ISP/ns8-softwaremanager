@@ -112,3 +112,7 @@ def test_ns8_rule_8_lf_line_endings_and_containerfile_sanitization() -> None:
     cfile_txt = CONTAINERFILE.read_text(encoding="utf-8")
     assert r"sed -i 's/\r$//'" in cfile_txt
     assert "chmod +x" in cfile_txt
+    # NS8 extract-ui / extract-image calls `podman create <image>` with no command;
+    # a FROM scratch module image MUST define ENTRYPOINT or CMD (e.g. ENTRYPOINT ["/"]) to avoid exit 125!
+    scratch_stage = cfile_txt.split("FROM scratch", 1)[1]
+    assert 'ENTRYPOINT ["/"]' in scratch_stage or 'CMD ["/"]' in scratch_stage

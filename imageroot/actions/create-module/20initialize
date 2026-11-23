@@ -13,7 +13,8 @@ swm_app_image = os.environ.get(
     "SOFTWAREMANAGER_APP_IMAGE",
     os.environ.get("SWM_APP_IMAGE", "ghcr.io/bls-isp/softwaremanager-app:latest"),
 )
-tcp_port = os.environ.get("TCP_PORT", "20080")
+tcp_ports = [p.strip() for p in os.environ.get("TCP_PORTS", "").split(",") if p.strip()]
+tcp_port = os.environ.get("TCP_PORT") or (tcp_ports[0] if tcp_ports else "20080")
 db_password = os.environ.get("DB_PASSWORD") or secrets.token_urlsafe(24)
 jwt_secret = os.environ.get("JWT_SECRET") or secrets.token_urlsafe(32)
 admin_username = os.environ.get("ADMIN_USERNAME", "admin")

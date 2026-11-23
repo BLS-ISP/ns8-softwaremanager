@@ -6,6 +6,7 @@ After=swm.service
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Environment=POSTGRES_IMAGE=docker.io/library/postgres:16-alpine
+EnvironmentFile=-%S/state/agent.env
 EnvironmentFile=%S/state/environment
 EnvironmentFile=-%S/state/secrets.env
 Restart=on-failure

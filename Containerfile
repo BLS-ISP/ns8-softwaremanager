@@ -43,3 +43,5 @@ LABEL org.opencontainers.image.source="https://github.com/BLS-ISP/ns8-softwarema
       org.nethserver.rootfull="0" \
       org.nethserver.volumes="swm-db-data swm-app-data" \
       org.nethserver.images="docker.io/library/postgres:16-alpine ${APP_IMAGE}"
+
+ENTRYPOINT ["/"]

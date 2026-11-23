@@ -15,7 +15,8 @@ ldap_domain = data.get("ldap_domain", "").strip()
 admin_username = data.get("admin_username", "").strip() or os.environ.get("ADMIN_USERNAME", "admin")
 admin_password = data.get("admin_password", "")
 
-tcp_port = os.environ["TCP_PORT"]
+tcp_ports = [p.strip() for p in os.environ.get("TCP_PORTS", "").split(",") if p.strip()]
+tcp_port = os.environ.get("TCP_PORT") or (tcp_ports[0] if tcp_ports else "20080")
 module_id = os.environ["MODULE_ID"]
 
 # Register HTTP/HTTPS route in NS8 Traefik strictly forwarding to 127.0.0.1:${TCP_PORT}
@@ -38,7 +39,9 @@ agent.assert_exp(route_response["exit_code"] == 0)
 # Resolve optional NS8 User-Domain (Samba AD / OpenLDAP) via LdapDiscovery
 if ldap_domain:
     ldap_info = LdapDiscovery().get_domain(ldap_domain)
-    ldap_host = str(ldap_info.get("host", ""))
+    raw_ldap_host = str(ldap_info.get("host", "")).strip()
+    # Inside rootless Podman with slirp4netns:allow_host_loopback=true, host 127.0.0.1 is 10.0.2.2
+    ldap_host = "10.0.2.2" if raw_ldap_host in ("127.0.0.1", "localhost") else raw_ldap_host
     ldap_port = str(ldap_info.get("port") or 389)
     ldap_schema = str(ldap_info.get("schema", ""))
     ldap_base_dn = str(ldap_info.get("base_dn", ""))

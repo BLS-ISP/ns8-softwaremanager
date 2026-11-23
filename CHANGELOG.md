@@ -3,6 +3,12 @@
 Alle relevanten Änderungen an **NS8-SoftwareManager** werden in dieser Datei dokumentiert.
 Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) und [Semantic Versioning](https://semver.org/lang/de/).
 
+## [1.0.2] - 2026-11-23
+
+### Fixed
+- **NS8 `extract-ui` / `add-module` (`Containerfile`):** Added `ENTRYPOINT ["/"]` to the `FROM scratch` module stage so `podman create` inside NS8 `extract-ui` and `extract-image` succeeds instead of exiting with code `125`.
+- **Rootless Podman Host-Loopback & LDAP Proxy (`imageroot/`):** Enabled `--network=slirp4netns:allow_host_loopback=true` on `swm.service`, loaded `agent.env` across systemd units, added `TCP_PORTS` fallback resolution, and mapped local `127.0.0.1` `LdapDiscovery` endpoints to `10.0.2.2` inside the pod.
+
 ## [1.0.0] - 2026-11-21
 
 ### Added
